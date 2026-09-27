@@ -1,238 +1,226 @@
-const API_BASE_URL = "https://subtotal-lip-carmaker.ngrok-free.dev";
+// Перехватчик любых неожиданных ошибок с выводом на экран
+window.onerror = function(msg, url, line) {
+  alert("Ошибка JS: " + msg + " (строка: " + line + ")");
+  return false;
+};
 
-// Получение Telegram WebApp данных
-const tg = window.Telegram?.WebApp;
+var API_BASE_URL = "https://subtotal-lip-carmaker.ngrok-free.dev";
+
+// Инициализация Telegram WebApp
+var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
 if (tg) {
-  tg.expand();
-  tg.ready();
+  try {
+    tg.expand();
+    tg.ready();
+  } catch (e) {}
 }
 
-const CURRENT_USER_ID = tg?.initDataUnsafe?.user?.id || 12345;
-const CURRENT_USER_NAME = tg?.initDataUnsafe?.user?.first_name || "Пользователь";
+var CURRENT_USER_ID = 12345;
+if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
+  CURRENT_USER_ID = tg.initDataUnsafe.user.id;
+}
 
-// Локальное состояние приложения
-let personalHabits = [];
-let coupleHabits = [];
-let historyData = {}; // формат: { "YYYY-MM-DD_habitId": true }
-let currentTab = "personal"; // "personal" или "couple"
-let currentWeekOffset = 0; // 0 — текущая неделя, -1 — прошлая, +1 — следующая
+// Переменные состояния
+var personalHabits = [];
+var coupleHabits = [];
+var historyData = {};
+var currentTab = "personal";
+var currentWeekOffset = 0;
 
-// Элементы интерфейса
-const habitsListEl = document.getElementById("habitsList");
-const emptyStateEl = document.getElementById("emptyState");
-const modalEl = document.getElementById("habitModal");
-const habitNameInput = document.getElementById("habitName");
-const habitIconInput = document.getElementById("habitIcon");
-const habitTargetInput = document.getElementById("habitTarget");
-const habitColorInput = document.getElementById("habitColor");
-const currentWeekLabelEl = document.getElementById("currentWeekLabel");
-
-// Стандартные заголовки для ngrok и JSON
-const API_HEADERS = {
+// Заголовки для запросов к ngrok
+var API_HEADERS = {
   "Content-Type": "application/json",
   "ngrok-skip-browser-warning": "true"
 };
 
 // ==========================================
-// 1. СЕТЕВЫЕ ЗАПРОСЫ К БЭКЕНДУ
+// 1. СЕТЬ
 // ==========================================
 
 async function loadServerState() {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/state?user_id=${CURRENT_USER_ID}`, {
-      headers: {
-        "ngrok-skip-browser-warning": "true"
-      }
+    var res = await fetch(API_BASE_URL + "/api/state?user_id=" + CURRENT_USER_ID, {
+      headers: { "ngrok-skip-browser-warning": "true" }
     });
-
-    if (!res.ok) {
-      throw new Error(`Статус сервера: ${res.status}`);
+    if (res.ok) {
+      var data = await res.json();
+      personalHabits = data.personalHabits || [];
+      coupleHabits = data.coupleHabits || [];
+      historyData = data.historyData || {};
     }
-
-    const data = await res.json();
-    personalHabits = data.personalHabits || [];
-    coupleHabits = data.coupleHabits || [];
-    historyData = data.historyData || {};
-
-    renderApp();
   } catch (err) {
     console.error("Ошибка загрузки данных:", err);
-    // Фронтенд продолжит работу локально в случае временной недоступности
-    renderApp();
   }
+  renderApp();
 }
 
 async function apiAddHabit(habitData) {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/habit/add`, {
+    var res = await fetch(API_BASE_URL + "/api/habit/add", {
       method: "POST",
       headers: API_HEADERS,
       body: JSON.stringify(habitData)
     });
     if (res.ok) {
-      const data = await res.json();
+      var data = await res.json();
       return data.id;
     }
   } catch (err) {
-    console.error("Ошибка при создании привычки:", err);
+    console.error("Ошибка API add:", err);
   }
   return null;
 }
 
 async function apiToggleDay(habitId, isoDate) {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/toggle`, {
+    var res = await fetch(API_BASE_URL + "/api/toggle", {
       method: "POST",
       headers: API_HEADERS,
       body: JSON.stringify({ habit_id: habitId, iso_date: isoDate })
     });
     if (res.ok) {
-      const data = await res.json();
+      var data = await res.json();
       return data.status;
     }
   } catch (err) {
-    console.error("Ошибка переключения дня:", err);
+    console.error("Ошибка API toggle:", err);
   }
   return null;
 }
 
 async function apiDeleteHabit(habitId) {
   try {
-    await fetch(`${API_BASE_URL}/api/habit/delete`, {
+    await fetch(API_BASE_URL + "/api/habit/delete", {
       method: "POST",
       headers: API_HEADERS,
       body: JSON.stringify({ habit_id: habitId })
     });
   } catch (err) {
-    console.error("Ошибка удаления:", err);
+    console.error("Ошибка API delete:", err);
   }
 }
 
 // ==========================================
-// 2. РАБОТА С ДАТАМИ И НЕДЕЛЯМИ
+// 2. РАБОТА С НЕДЕЛЕЙ
 // ==========================================
 
-function getWeekDates(offset = 0) {
-  const now = new Date();
-  const currentDay = now.getDay();
-  // Понедельник как первый день (0 - Пн, 6 - Вс)
-  const diffToMonday = currentDay === 0 ? -6 : 1 - currentDay;
-  const monday = new Date(now);
-  monday.setDate(now.getDate() + diffToMonday + offset * 7);
+function getWeekDates(offset) {
+  var now = new Date();
+  var dayOfWeek = now.getDay();
+  var diff = (dayOfWeek === 0 ? -6 : 1) - dayOfWeek;
+  var monday = new Date(now);
+  monday.setDate(now.getDate() + diff + (offset * 7));
 
-  const week = [];
-  const daysShort = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+  var week = [];
+  var names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(monday);
+  for (var i = 0; i < 7; i++) {
+    var d = new Date(monday);
     d.setDate(monday.getDate() + i);
-    const iso = d.toISOString().split("T")[0];
+    var iso = d.toISOString().split("T")[0];
+    var todayIso = now.toISOString().split("T")[0];
     week.push({
-      name: daysShort[i],
+      name: names[i],
       dateNumber: d.getDate(),
       iso: iso,
-      isToday: iso === now.toISOString().split("T")[0]
+      isToday: (iso === todayIso)
     });
   }
   return week;
 }
 
-function updateWeekLabel(week) {
-  if (currentWeekLabelEl) {
-    const start = `${week[0].dateNumber}.${String(new Date(week[0].iso).getMonth() + 1).padStart(2, "0")}`;
-    const end = `${week[6].dateNumber}.${String(new Date(week[6].iso).getMonth() + 1).padStart(2, "0")}`;
-    currentWeekLabelEl.textContent = `${start} — ${end}`;
-  }
-}
-
 // ==========================================
-// 3. ОТРИСОВКА ИНТЕРФЕЙСА
+// 3. ОТРИСОВКА
 // ==========================================
 
 function renderApp() {
-  const list = currentTab === "personal" ? personalHabits : coupleHabits;
-  const week = getWeekDates(currentWeekOffset);
-  updateWeekLabel(week);
+  var list = (currentTab === "personal") ? personalHabits : coupleHabits;
+  var week = getWeekDates(currentWeekOffset);
 
-  habitsListEl.innerHTML = "";
+  var weekLabel = document.getElementById("currentWeekLabel");
+  if (weekLabel && week.length === 7) {
+    var startMonth = String(new Date(week[0].iso).getMonth() + 1).padStart(2, "0");
+    var endMonth = String(new Date(week[6].iso).getMonth() + 1).padStart(2, "0");
+    weekLabel.textContent = week[0].dateNumber + "." + startMonth + " — " + week[6].dateNumber + "." + endMonth;
+  }
+
+  var listEl = document.getElementById("habitsList");
+  var emptyEl = document.getElementById("emptyState");
+  if (!listEl) return;
+
+  listEl.innerHTML = "";
 
   if (list.length === 0) {
-    emptyStateEl.style.display = "block";
+    if (emptyEl) emptyEl.style.display = "block";
     return;
   }
-  emptyStateEl.style.display = "none";
+  if (emptyEl) emptyEl.style.display = "none";
 
-  list.forEach(habit => {
-    // Подсчет выполненных дней за выбранную неделю
-    let completedInWeek = 0;
-    week.forEach(day => {
-      if (historyData[`${day.iso}_${habit.id}`]) {
-        completedInWeek++;
+  list.forEach(function(habit) {
+    var completedCount = 0;
+    week.forEach(function(d) {
+      if (historyData[d.iso + "_" + habit.id]) {
+        completedCount++;
       }
     });
 
-    const card = document.createElement("div");
+    var card = document.createElement("div");
     card.className = "habit-card";
 
-    // Шапка карточки привычки
-    const header = document.createElement("div");
+    var header = document.createElement("div");
     header.className = "habit-header";
-    header.innerHTML = `
-      <div class="habit-title">
-        <span class="habit-icon">${habit.icon || "✨"}</span>
-        <div>
-          <h3>${habit.name}</h3>
-          <span class="target-badge">Цель: ${completedInWeek}/${habit.target} дн.</span>
-        </div>
-      </div>
-      <button class="btn-delete" title="Удалить" onclick="handleDeleteHabit(${habit.id})">✕</button>
-    `;
+    header.innerHTML =
+      '<div class="habit-title">' +
+        '<span class="habit-icon">' + (habit.icon || "✨") + '</span>' +
+        '<div>' +
+          '<h3>' + habit.name + '</h3>' +
+          '<span class="target-badge">Цель: ' + completedCount + '/' + habit.target + ' дн.</span>' +
+        '</div>' +
+      '</div>' +
+      '<button class="btn-delete" onclick="handleDeleteHabit(' + habit.id + ')">✕</button>';
 
-    // Сетка дней недели
-    const grid = document.createElement("div");
+    var grid = document.createElement("div");
     grid.className = "days-grid";
 
-    week.forEach(day => {
-      const isChecked = !!historyData[`${day.iso}_${habit.id}`];
-      const dayBtn = document.createElement("div");
-      dayBtn.className = `day-cell ${day.isToday ? "today" : ""} ${isChecked ? "checked" : ""}`;
+    week.forEach(function(d) {
+      var isChecked = !!historyData[d.iso + "_" + habit.id];
+      var cell = document.createElement("div");
+      cell.className = "day-cell" + (d.isToday ? " today" : "") + (isChecked ? " checked" : "");
       if (isChecked) {
-        dayBtn.style.backgroundColor = habit.color || "#3b82f6";
+        cell.style.backgroundColor = habit.color || "#3b82f6";
       }
 
-      dayBtn.innerHTML = `
-        <span class="day-name">${day.name}</span>
-        <span class="day-num">${day.dateNumber}</span>
-      `;
+      cell.innerHTML =
+        '<span class="day-name">' + d.name + '</span>' +
+        '<span class="day-num">' + d.dateNumber + '</span>';
 
-      dayBtn.onclick = () => handleDayToggle(habit.id, day.iso);
-      grid.appendChild(dayBtn);
+      cell.onclick = function() {
+        handleDayToggle(habit.id, d.iso);
+      };
+      grid.appendChild(cell);
     });
 
-    // Прогресс-бар
-    const progressPercent = Math.min(100, Math.round((completedInWeek / habit.target) * 100));
-    const progressBar = document.createElement("div");
-    progressBar.className = "progress-container";
-    progressBar.innerHTML = `
-      <div class="progress-bar" style="width: ${progressPercent}%; background-color: ${habit.color || "#3b82f6"};"></div>
-    `;
+    var percent = Math.min(100, Math.round((completedCount / habit.target) * 100));
+    var progress = document.createElement("div");
+    progress.className = "progress-container";
+    progress.innerHTML =
+      '<div class="progress-bar" style="width: ' + percent + '%; background-color: ' + (habit.color || "#3b82f6") + ';"></div>';
 
     card.appendChild(header);
     card.appendChild(grid);
-    card.appendChild(progressBar);
-    habitsListEl.appendChild(card);
+    card.appendChild(progress);
+    listEl.appendChild(card);
   });
 }
 
 // ==========================================
-// 4. ДЕЙСТВИЯ ПОЛЬЗОВАТЕЛЯ
+// 4. ДЕЙСТВИЯ (С ЭКСПОРТОМ В WINDOW)
 // ==========================================
 
-async function handleDayToggle(habitId, isoDate) {
-  const key = `${isoDate}_${habitId}`;
-  const willBeActive = !historyData[key];
+window.handleDayToggle = async function(habitId, isoDate) {
+  var key = isoDate + "_" + habitId;
+  var willBeActive = !historyData[key];
 
-  // Оптимистичное обновление интерфейса без задержек
   if (willBeActive) {
     historyData[key] = true;
   } else {
@@ -240,58 +228,62 @@ async function handleDayToggle(habitId, isoDate) {
   }
   renderApp();
 
-  // Отправка на бэкенд
-  const status = await apiToggleDay(habitId, isoDate);
+  var status = await apiToggleDay(habitId, isoDate);
   if (status === null) {
-    // В случае сбоя возвращаем старое состояние
     if (willBeActive) delete historyData[key];
     else historyData[key] = true;
     renderApp();
   }
-}
+};
 
-async function handleDeleteHabit(habitId) {
+window.handleDeleteHabit = async function(habitId) {
   if (!confirm("Удалить эту цель?")) return;
 
   if (currentTab === "personal") {
-    personalHabits = personalHabits.filter(h => h.id !== habitId);
+    personalHabits = personalHabits.filter(function(h) { return h.id !== habitId; });
   } else {
-    coupleHabits = coupleHabits.filter(h => h.id !== habitId);
+    coupleHabits = coupleHabits.filter(function(h) { return h.id !== habitId; });
   }
   renderApp();
   await apiDeleteHabit(habitId);
-}
+};
 
-function openModal() {
-  modalEl.style.display = "flex";
-  habitNameInput.value = "";
-  habitIconInput.value = "🎯";
-  habitTargetInput.value = "3";
-}
+window.openModal = function() {
+  var modal = document.getElementById("habitModal");
+  if (modal) modal.style.display = "flex";
+  var nameInput = document.getElementById("habitName");
+  if (nameInput) nameInput.value = "";
+};
 
-function closeModal() {
-  modalEl.style.display = "none";
-}
+window.closeModal = function() {
+  var modal = document.getElementById("habitModal");
+  if (modal) modal.style.display = "none";
+};
 
-async function saveNewHabit() {
-  const name = habitNameInput.value.trim();
+window.saveNewHabit = async function() {
+  var nameInput = document.getElementById("habitName");
+  var iconInput = document.getElementById("habitIcon");
+  var targetInput = document.getElementById("habitTarget");
+  var colorInput = document.getElementById("habitColor");
+
+  var name = nameInput ? nameInput.value.trim() : "";
   if (!name) {
-    alert("Пожалуйста, введите название цели");
+    alert("Введите название цели!");
     return;
   }
 
-  const newHabit = {
+  var newHabit = {
     user_id: CURRENT_USER_ID,
     name: name,
-    icon: habitIconInput.value.trim() || "✨",
-    target: parseInt(habitTargetInput.value) || 3,
-    color: habitColorInput.value || "#3b82f6",
-    is_couple: currentTab === "couple" ? 1 : 0
+    icon: (iconInput && iconInput.value.trim()) ? iconInput.value.trim() : "🎯",
+    target: (targetInput && parseInt(targetInput.value)) ? parseInt(targetInput.value) : 3,
+    color: (colorInput && colorInput.value) ? colorInput.value : "#3b82f6",
+    is_couple: (currentTab === "couple" ? 1 : 0)
   };
 
-  closeModal();
+  window.closeModal();
 
-  const createdId = await apiAddHabit(newHabit);
+  var createdId = await apiAddHabit(newHabit);
   newHabit.id = createdId || Date.now();
 
   if (currentTab === "personal") {
@@ -301,23 +293,23 @@ async function saveNewHabit() {
   }
 
   renderApp();
-}
+};
 
-// Переключение табов "Личные" / "Совместные"
-function setTab(tab) {
+window.setTab = function(tab) {
   currentTab = tab;
-  document.querySelectorAll(".tab-btn").forEach(btn => {
-    btn.classList.toggle("active", btn.dataset.tab === tab);
+  var buttons = document.querySelectorAll(".tab-btn");
+  buttons.forEach(function(btn) {
+    btn.classList.toggle("active", btn.getAttribute("data-tab") === tab);
   });
   renderApp();
-}
+};
 
-function changeWeek(direction) {
+window.changeWeek = function(direction) {
   currentWeekOffset += direction;
   renderApp();
-}
+};
 
-// Запуск приложения
-document.addEventListener("DOMContentLoaded", () => {
+// Запуск при загрузке документа
+document.addEventListener("DOMContentLoaded", function() {
   loadServerState();
 });
