@@ -1,26 +1,17 @@
+const API_BASE_URL = "https://be1e0ec8844fd2.lhr.life";
+
 const tg = window.Telegram?.WebApp;
 if (tg) tg.expand();
 
-// ==========================================
-// 1. ХРАНИЛИЩЕ ДАННЫХ (ЧИСТЫЙ СТАРТ С НУЛЯ)
-// ==========================================
-// Сброс старых предустановленных данных при первом переходе на новую версию
-if (!localStorage.getItem('habits_v2_clean')) {
-  localStorage.removeItem('my_personal_habits');
-  localStorage.removeItem('my_couple_habits');
-  localStorage.setItem('habits_v2_clean', 'true');
-}
-
-// Пустые массивы — пользователь создаёт всё сам
-const DEFAULT_PERSONAL_HABITS = [];
-const DEFAULT_COUPLE_HABITS = [];
+// Получаем user_id из Telegram (или тестовый 12345 для браузера на ПК)
+const USER_ID = tg?.initDataUnsafe?.user?.id || 12345;
 
 let currentMode = 'personal'; // 'personal' или 'couple'
 
-let personalHabits = JSON.parse(localStorage.getItem('my_personal_habits')) || DEFAULT_PERSONAL_HABITS;
-let coupleHabits = JSON.parse(localStorage.getItem('my_couple_habits')) || DEFAULT_COUPLE_HABITS;
-let historyData = JSON.parse(localStorage.getItem('my_habit_history')) || {};
-let coupleSpaceName = localStorage.getItem('my_space_name') || "Совместные";
+let personalHabits = [];
+let coupleHabits = [];
+let historyData = {};
+let hasPair = false;
 
 // ==========================================
 // 2. КАЛЕНДАРЬ И ДАТЫ
@@ -62,19 +53,33 @@ function toISODate(d) {
 }
 
 // ==========================================
-// 3. ИНИЦИАЛИЗАЦИЯ И ПЕРЕКЛЮЧЕНИЯ
+// 3. ЗАГРУЗКА ДАННЫХ С СЕРВЕРА
 // ==========================================
-document.addEventListener('DOMContentLoaded', () => {
-  updateSpaceUI();
-  renderWeekView();
-});
+async function loadServerState() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/state?user_id=${USER_ID}`);
+    if (res.ok) {
+      const data = await res.json();
+      personalHabits = data.personalHabits || [];
+      coupleHabits = data.coupleHabits || [];
+      historyData = data.historyData || {};
+      hasPair = data.hasPair;
 
-function updateSpaceUI() {
-  const titleElem = document.getElementById('couple-tab-title');
-  if (titleElem) {
-    titleElem.innerText = coupleSpaceName;
+      const coupleBtnTitle = document.getElementById('couple-tab-title');
+      if (coupleBtnTitle) {
+        coupleBtnTitle.innerText = hasPair ? "Мы вместе ❤️" : "Совместные";
+      }
+    }
+  } catch (err) {
+    console.warn("Ошибка подключения к серверу:", err);
   }
+
+  renderWeekView();
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadServerState();
+});
 
 function switchMode(mode) {
   currentMode = mode;
@@ -125,7 +130,7 @@ function renderWeekView() {
   const endStr = `${weekDates[6].getDate()}.${String(weekDates[6].getMonth() + 1).padStart(2, '0')}.${weekDates[6].getFullYear()}`;
   document.getElementById('week-dates-label').innerText = `${startStr} — ${endStr}`;
 
-  // 1. Шапка таблицы
+  // Шапка таблицы
   const headRow = document.getElementById('table-head-row');
   let headHTML = `
     <th class="col-habit">Привычка</th>
@@ -151,16 +156,17 @@ function renderWeekView() {
   `;
   headRow.innerHTML = headHTML;
 
-  // 2. Строки таблицы
+  // Строки
   const tbody = document.getElementById('habits-body');
   tbody.innerHTML = '';
 
-  // Если привычек нет — информационная плашка
   if (activeHabits.length === 0) {
     const emptyRow = document.createElement('tr');
     emptyRow.innerHTML = `
       <td colspan="12" style="padding: 35px 15px; color: #64748b; font-size: 0.88rem; font-weight: 500;">
-        Целей пока нет. Нажми «${currentMode === 'personal' ? '+ Добавить цель' : '+ Добавить совместную цель'}», чтобы начать ✨
+        ${currentMode === 'couple' && !hasPair 
+          ? "Партнёр ещё не подключён! Отправь инвайт-ссылку из бота 🔗" 
+          : "Целей пока нет. Нажми «+ Добавить», чтобы создать первую ✨"}
       </td>
     `;
     tbody.appendChild(emptyRow);
@@ -222,12 +228,12 @@ function renderWeekView() {
     tbody.appendChild(tr);
   });
 
-  // 3. Общие показатели недели
+  // Итоги недели
   const overallPercent = weekTotalTarget > 0 ? Math.round((weekTotalDone / weekTotalTarget) * 100) : 0;
   document.getElementById('total-done-ratio').innerText = `${weekTotalDone} / ${weekTotalTarget}`;
   document.getElementById('total-percent-label').innerText = `${overallPercent}%`;
 
-  // 4. Столбчатый график с динамическим светофором
+  // Светофорный график
   const chartBox = document.getElementById('days-chart');
   chartBox.innerHTML = '';
   const maxInDay = Math.max(activeHabits.length, 1);
@@ -255,17 +261,27 @@ function renderWeekView() {
   });
 }
 
-function toggleHistoryDay(isoDate, habitId) {
+// ПЕРЕКЛЮЧЕНИЕ ГАЛОЧКИ
+async function toggleHistoryDay(isoDate, habitId) {
   const key = `${isoDate}_${habitId}`;
+  
   if (historyData[key]) {
     delete historyData[key];
   } else {
     historyData[key] = true;
     if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
   }
-
-  saveStorage();
   renderWeekView();
+
+  try {
+    await fetch(`${API_BASE_URL}/api/toggle`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ habit_id: habitId, iso_date: isoDate })
+    });
+  } catch (e) {
+    console.error("Ошибка сохранения отметки:", e);
+  }
 }
 
 function changeWeek(direction) {
@@ -279,7 +295,7 @@ function goToCurrentWeek() {
 }
 
 // ==========================================
-// 5. МЕСЯЧНЫЙ ЭКРАН (КРУГОВАЯ ДИАГРАММА)
+// 5. МЕСЯЧНЫЙ ЭКРАН
 // ==========================================
 function changeMonth(direction) {
   currentMonthDate.setMonth(currentMonthDate.getMonth() + direction);
@@ -400,7 +416,7 @@ function drawMonthPieChart(segments) {
 }
 
 // ==========================================
-// 6. ДОБАВЛЕНИЕ И УДАЛЕНИЕ ПРИВЫЧЕК
+// 6. ДОБАВЛЕНИЕ И УДАЛЕНИЕ ЧЕРЕЗ API
 // ==========================================
 let chosenIcon = "🏋️";
 const COLOR_PALETTE = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
@@ -424,7 +440,7 @@ function pickIcon(el) {
   chosenIcon = el.innerText;
 }
 
-function saveNewHabit() {
+async function saveNewHabit() {
   const nameInput = document.getElementById('habit-name-input');
   const targetInput = document.getElementById('habit-target-input');
 
@@ -437,16 +453,35 @@ function saveNewHabit() {
   const activeHabits = getActiveHabits();
   const randomColor = COLOR_PALETTE[activeHabits.length % COLOR_PALETTE.length];
 
-  const newHabit = {
-    id: Date.now(),
+  const payload = {
+    user_id: USER_ID,
     name: title,
     icon: chosenIcon,
     target: parseInt(targetInput.value) || 3,
-    color: randomColor
+    color: randomColor,
+    is_couple: currentMode === 'couple' ? 1 : 0
   };
 
-  activeHabits.push(newHabit);
-  saveStorage();
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/habit/add`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const result = await res.json();
+
+    const newHabit = {
+      id: result.id,
+      name: payload.name,
+      icon: payload.icon,
+      target: payload.target,
+      color: payload.color
+    };
+
+    activeHabits.push(newHabit);
+  } catch (e) {
+    console.error("Ошибка добавления привычки:", e);
+  }
 
   nameInput.value = '';
   closeAddModal();
@@ -455,23 +490,24 @@ function saveNewHabit() {
   confetti({ particleCount: 30, spread: 50, origin: { y: 0.6 } });
 }
 
-function deleteHabit(id) {
-  if (confirm("Удалить эту цель?")) {
-    if (currentMode === 'personal') {
-      personalHabits = personalHabits.filter(h => h.id !== id);
-    } else {
-      coupleHabits = coupleHabits.filter(h => h.id !== id);
-    }
-    saveStorage();
-    renderWeekView();
-  }
-}
+async function deleteHabit(id) {
+  if (!confirm("Удалить эту цель?")) return;
 
-// ==========================================
-// 7. СОХРАНЕНИЕ
-// ==========================================
-function saveStorage() {
-  localStorage.setItem('my_personal_habits', JSON.stringify(personalHabits));
-  localStorage.setItem('my_couple_habits', JSON.stringify(coupleHabits));
-  localStorage.setItem('my_habit_history', JSON.stringify(historyData));
+  if (currentMode === 'personal') {
+    personalHabits = personalHabits.filter(h => h.id !== id);
+  } else {
+    coupleHabits = coupleHabits.filter(h => h.id !== id);
+  }
+
+  renderWeekView();
+
+  try {
+    await fetch(`${API_BASE_URL}/api/habit/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ habit_id: id })
+    });
+  } catch (e) {
+    console.error("Ошибка удаления:", e);
+  }
 }
