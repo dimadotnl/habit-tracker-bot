@@ -14,7 +14,7 @@ let historyData = {};
 let hasPair = false;
 
 // ==========================================
-// 2. КАЛЕНДАРЬ И ДАТЫ
+// 1. КАЛЕНДАРЬ И ДАТЫ
 // ==========================================
 let currentWeekOffset = 0;
 let currentMonthDate = new Date();
@@ -53,11 +53,12 @@ function toISODate(d) {
 }
 
 // ==========================================
-// 3. ЗАГРУЗКА ДАННЫХ С СЕРВЕРА
+// 2. ЗАГРУЗКА ДАННЫХ С СЕРВЕРА
 // ==========================================
 async function loadServerState() {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/state?user_id=${USER_ID}`);
+    const currentUserId = tg?.initDataUnsafe?.user?.id || USER_ID || 12345;
+    const res = await fetch(`${API_BASE_URL}/api/state?user_id=${currentUserId}`);
     if (res.ok) {
       const data = await res.json();
       personalHabits = data.personalHabits || [];
@@ -69,6 +70,8 @@ async function loadServerState() {
       if (coupleBtnTitle) {
         coupleBtnTitle.innerText = hasPair ? "Мы вместе ❤️" : "Совместные";
       }
+    } else {
+      console.warn("Сервер вернул статус:", res.status);
     }
   } catch (err) {
     console.warn("Ошибка подключения к серверу:", err);
@@ -119,7 +122,7 @@ function switchView(viewName) {
 }
 
 // ==========================================
-// 4. НЕДЕЛЬНЫЙ ЭКРАН (ТАБЛИЦА + ГРАФИК)
+// 3. НЕДЕЛЬНЫЙ ЭКРАН (ТАБЛИЦА + ГРАФИК)
 // ==========================================
 function renderWeekView() {
   const activeHabits = getActiveHabits();
@@ -156,7 +159,7 @@ function renderWeekView() {
   `;
   headRow.innerHTML = headHTML;
 
-  // Строки
+  // Строки таблицы
   const tbody = document.getElementById('habits-body');
   tbody.innerHTML = '';
 
@@ -274,11 +277,14 @@ async function toggleHistoryDay(isoDate, habitId) {
   renderWeekView();
 
   try {
-    await fetch(`${API_BASE_URL}/api/toggle`, {
+    const res = await fetch(`${API_BASE_URL}/api/toggle`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ habit_id: habitId, iso_date: isoDate })
     });
+    if (!res.ok) {
+      console.error("Сервер не сохранил отметку, статус:", res.status);
+    }
   } catch (e) {
     console.error("Ошибка сохранения отметки:", e);
   }
@@ -295,7 +301,7 @@ function goToCurrentWeek() {
 }
 
 // ==========================================
-// 5. МЕСЯЧНЫЙ ЭКРАН
+// 4. МЕСЯЧНЫЙ ЭКРАН (КРУГОВАЯ ДИАГРАММА)
 // ==========================================
 function changeMonth(direction) {
   currentMonthDate.setMonth(currentMonthDate.getMonth() + direction);
@@ -416,7 +422,7 @@ function drawMonthPieChart(segments) {
 }
 
 // ==========================================
-// 6. ДОБАВЛЕНИЕ И УДАЛЕНИЕ ЧЕРЕЗ API
+// 5. ДОБАВЛЕНИЕ И УДАЛЕНИЕ ЦЕЛЕЙ
 // ==========================================
 let chosenIcon = "🏋️";
 const COLOR_PALETTE = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
@@ -446,18 +452,21 @@ async function saveNewHabit() {
 
   const title = nameInput.value.trim();
   if (!title) {
-    alert("Введите название!");
+    alert("Введите название цели!");
     return;
   }
 
   const activeHabits = getActiveHabits();
   const randomColor = COLOR_PALETTE[activeHabits.length % COLOR_PALETTE.length];
+  const targetVal = parseInt(targetInput.value) || 3;
+
+  const currentUserId = tg?.initDataUnsafe?.user?.id || USER_ID || 12345;
 
   const payload = {
-    user_id: USER_ID,
+    user_id: Number(currentUserId),
     name: title,
     icon: chosenIcon,
-    target: parseInt(targetInput.value) || 3,
+    target: targetVal,
     color: randomColor,
     is_couple: currentMode === 'couple' ? 1 : 0
   };
@@ -468,6 +477,12 @@ async function saveNewHabit() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Статус ${res.status}: ${errText}`);
+    }
+
     const result = await res.json();
 
     const newHabit = {
@@ -479,15 +494,18 @@ async function saveNewHabit() {
     };
 
     activeHabits.push(newHabit);
+
+    nameInput.value = '';
+    closeAddModal();
+    renderWeekView();
+
+    if (typeof confetti === 'function') {
+      confetti({ particleCount: 30, spread: 50, origin: { y: 0.6 } });
+    }
   } catch (e) {
-    console.error("Ошибка добавления привычки:", e);
+    alert("Ошибка сохранения: " + e.message);
+    console.error("Ошибка сохранения цели:", e);
   }
-
-  nameInput.value = '';
-  closeAddModal();
-  renderWeekView();
-
-  confetti({ particleCount: 30, spread: 50, origin: { y: 0.6 } });
 }
 
 async function deleteHabit(id) {
