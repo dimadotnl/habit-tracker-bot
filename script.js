@@ -3,7 +3,7 @@ const API_BASE_URL = "https://be1e0ec8844fd2.lhr.life";
 const tg = window.Telegram?.WebApp;
 if (tg) tg.expand();
 
-// Получаем user_id из Telegram (или тестовый 12345 для браузера на ПК)
+// Получаем user_id из Telegram (или тестовый ID для браузера)
 const USER_ID = tg?.initDataUnsafe?.user?.id || 12345;
 
 let currentMode = 'personal'; // 'personal' или 'couple'
@@ -12,6 +12,9 @@ let personalHabits = [];
 let coupleHabits = [];
 let historyData = {};
 let hasPair = false;
+
+// Буфер для надежного считывания текста из поля ввода
+let currentInputHabitName = "";
 
 // ==========================================
 // 1. КАЛЕНДАРЬ И ДАТЫ
@@ -57,7 +60,7 @@ function toISODate(d) {
 // ==========================================
 async function loadServerState() {
   try {
-    const currentUserId = tg?.initDataUnsafe?.user?.id || USER_ID || 12345;
+    const currentUserId = tg?.initDataUnsafe?.user?.id || USER_ID;
     const res = await fetch(`${API_BASE_URL}/api/state?user_id=${currentUserId}`);
     if (res.ok) {
       const data = await res.json();
@@ -70,11 +73,9 @@ async function loadServerState() {
       if (coupleBtnTitle) {
         coupleBtnTitle.innerText = hasPair ? "Мы вместе ❤️" : "Совместные";
       }
-    } else {
-      console.warn("Сервер вернул статус:", res.status);
     }
   } catch (err) {
-    console.warn("Ошибка подключения к серверу:", err);
+    console.warn("Сервер временно недоступен:", err);
   }
 
   renderWeekView();
@@ -82,6 +83,19 @@ async function loadServerState() {
 
 document.addEventListener('DOMContentLoaded', () => {
   loadServerState();
+
+  // Страховочный слушатель ввода и сохранение по Enter
+  const inputField = document.getElementById('habit-name-input');
+  if (inputField) {
+    inputField.addEventListener('input', (e) => {
+      currentInputHabitName = e.target.value;
+    });
+    inputField.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        saveNewHabit();
+      }
+    });
+  }
 });
 
 function switchMode(mode) {
@@ -236,7 +250,7 @@ function renderWeekView() {
   document.getElementById('total-done-ratio').innerText = `${weekTotalDone} / ${weekTotalTarget}`;
   document.getElementById('total-percent-label').innerText = `${overallPercent}%`;
 
-  // Светофорный график
+  // График дней
   const chartBox = document.getElementById('days-chart');
   chartBox.innerHTML = '';
   const maxInDay = Math.max(activeHabits.length, 1);
@@ -277,14 +291,11 @@ async function toggleHistoryDay(isoDate, habitId) {
   renderWeekView();
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/toggle`, {
+    await fetch(`${API_BASE_URL}/api/toggle`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ habit_id: habitId, iso_date: isoDate })
     });
-    if (!res.ok) {
-      console.error("Сервер не сохранил отметку, статус:", res.status);
-    }
   } catch (e) {
     console.error("Ошибка сохранения отметки:", e);
   }
@@ -428,8 +439,13 @@ let chosenIcon = "🏋️";
 const COLOR_PALETTE = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
 
 function openAddModal() {
-  document.getElementById('add-modal').classList.add('active');
-  document.getElementById('habit-name-input').focus();
+  currentInputHabitName = "";
+  const nameInput = document.getElementById('habit-name-input');
+  if (nameInput) {
+    nameInput.value = "";
+    document.getElementById('add-modal').classList.add('active');
+    setTimeout(() => nameInput.focus(), 100);
+  }
 }
 
 function closeAddModal() {
@@ -450,7 +466,9 @@ async function saveNewHabit() {
   const nameInput = document.getElementById('habit-name-input');
   const targetInput = document.getElementById('habit-target-input');
 
-  const title = nameInput.value.trim();
+  // Читаем из поля ввода или из буфера события
+  const title = (nameInput ? nameInput.value.trim() : "") || currentInputHabitName.trim();
+
   if (!title) {
     alert("Введите название цели!");
     return;
@@ -458,10 +476,28 @@ async function saveNewHabit() {
 
   const activeHabits = getActiveHabits();
   const randomColor = COLOR_PALETTE[activeHabits.length % COLOR_PALETTE.length];
-  const targetVal = parseInt(targetInput.value) || 3;
+  const targetVal = parseInt(targetInput ? targetInput.value : 3) || 3;
+  const currentUserId = tg?.initDataUnsafe?.user?.id || USER_ID;
 
-  const currentUserId = tg?.initDataUnsafe?.user?.id || USER_ID || 12345;
+  const tempId = Date.now();
+  const newHabit = {
+    id: tempId,
+    name: title,
+    icon: chosenIcon,
+    target: targetVal,
+    color: randomColor
+  };
 
+  // 1. Моментально отображаем в интерфейсе
+  activeHabits.push(newHabit);
+  closeAddModal();
+  renderWeekView();
+
+  if (typeof confetti === 'function') {
+    confetti({ particleCount: 30, spread: 50, origin: { y: 0.6 } });
+  }
+
+  // 2. В фоне передаём на Python-сервер в базу SQLite
   const payload = {
     user_id: Number(currentUserId),
     name: title,
@@ -478,33 +514,14 @@ async function saveNewHabit() {
       body: JSON.stringify(payload)
     });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Статус ${res.status}: ${errText}`);
-    }
-
-    const result = await res.json();
-
-    const newHabit = {
-      id: result.id,
-      name: payload.name,
-      icon: payload.icon,
-      target: payload.target,
-      color: payload.color
-    };
-
-    activeHabits.push(newHabit);
-
-    nameInput.value = '';
-    closeAddModal();
-    renderWeekView();
-
-    if (typeof confetti === 'function') {
-      confetti({ particleCount: 30, spread: 50, origin: { y: 0.6 } });
+    if (res.ok) {
+      const result = await res.json();
+      if (result.id) {
+        newHabit.id = result.id;
+      }
     }
   } catch (e) {
-    alert("Ошибка сохранения: " + e.message);
-    console.error("Ошибка сохранения цели:", e);
+    console.error("Ошибка сохранения на бэкенд:", e);
   }
 }
 
