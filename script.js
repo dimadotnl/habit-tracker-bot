@@ -1,9 +1,4 @@
-// Перехватчик любых неожиданных ошибок с выводом на экран
-window.onerror = function(msg, url, line) {
-  alert("Ошибка JS: " + msg + " (строка: " + line + ")");
-  return false;
-};
-
+// URL туннеля ngrok
 var API_BASE_URL = "https://subtotal-lip-carmaker.ngrok-free.dev";
 
 // Инициализация Telegram WebApp
@@ -20,21 +15,24 @@ if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.
   CURRENT_USER_ID = tg.initDataUnsafe.user.id;
 }
 
-// Переменные состояния
+// Состояние приложения
+var currentMode = "personal"; // "personal" или "couple"
+var currentView = "week";     // "week" или "month"
+var currentWeekOffset = 0;
+var currentMonthOffset = 0;
+
 var personalHabits = [];
 var coupleHabits = [];
-var historyData = {};
-var currentTab = "personal";
-var currentWeekOffset = 0;
+var historyData = {}; // { "YYYY-MM-DD_habitId": true }
+var selectedIcon = "🏋️";
 
-// Заголовки для запросов к ngrok
 var API_HEADERS = {
   "Content-Type": "application/json",
   "ngrok-skip-browser-warning": "true"
 };
 
 // ==========================================
-// 1. СЕТЬ
+// 1. СЕТЕВЫЕ ЗАПРОСЫ К БЭКЕНДУ
 // ==========================================
 
 async function loadServerState() {
@@ -51,7 +49,7 @@ async function loadServerState() {
   } catch (err) {
     console.error("Ошибка загрузки данных:", err);
   }
-  renderApp();
+  render();
 }
 
 async function apiAddHabit(habitData) {
@@ -66,7 +64,7 @@ async function apiAddHabit(habitData) {
       return data.id;
     }
   } catch (err) {
-    console.error("Ошибка API add:", err);
+    console.error("Ошибка добавления привычки:", err);
   }
   return null;
 }
@@ -83,7 +81,7 @@ async function apiToggleDay(habitId, isoDate) {
       return data.status;
     }
   } catch (err) {
-    console.error("Ошибка API toggle:", err);
+    console.error("Ошибка переключения дня:", err);
   }
   return null;
 }
@@ -96,18 +94,18 @@ async function apiDeleteHabit(habitId) {
       body: JSON.stringify({ habit_id: habitId })
     });
   } catch (err) {
-    console.error("Ошибка API delete:", err);
+    console.error("Ошибка удаления:", err);
   }
 }
 
 // ==========================================
-// 2. РАБОТА С НЕДЕЛЕЙ
+// 2. РАСЧЕТ ДАТ
 // ==========================================
 
 function getWeekDates(offset) {
   var now = new Date();
-  var dayOfWeek = now.getDay();
-  var diff = (dayOfWeek === 0 ? -6 : 1) - dayOfWeek;
+  var day = now.getDay();
+  var diff = (day === 0 ? -6 : 1) - day;
   var monday = new Date(now);
   monday.setDate(now.getDate() + diff + (offset * 7));
 
@@ -130,207 +128,282 @@ function getWeekDates(offset) {
 }
 
 // ==========================================
-// 3. ОТРИСОВКА
+// 3. ОТРИСОВКА ИНТЕРФЕЙСА
 // ==========================================
 
-function renderApp() {
-  var list = (currentTab === "personal") ? personalHabits : coupleHabits;
+function render() {
+  if (currentView === "week") {
+    renderWeekView();
+  } else {
+    renderMonthView();
+  }
+}
+
+function renderWeekView() {
+  var list = (currentMode === "personal") ? personalHabits : coupleHabits;
   var week = getWeekDates(currentWeekOffset);
 
-  var weekLabel = document.getElementById("currentWeekLabel");
-  if (weekLabel && week.length === 7) {
+  // Обновление заголовка дат
+  var weekDatesLabel = document.getElementById("week-dates-label");
+  if (weekDatesLabel && week.length === 7) {
     var startMonth = String(new Date(week[0].iso).getMonth() + 1).padStart(2, "0");
     var endMonth = String(new Date(week[6].iso).getMonth() + 1).padStart(2, "0");
-    weekLabel.textContent = week[0].dateNumber + "." + startMonth + " — " + week[6].dateNumber + "." + endMonth;
+    weekDatesLabel.textContent = week[0].dateNumber + "." + startMonth + " — " + week[6].dateNumber + "." + endMonth;
   }
 
-  var listEl = document.getElementById("habitsList");
-  var emptyEl = document.getElementById("emptyState");
-  if (!listEl) return;
-
-  listEl.innerHTML = "";
-
-  if (list.length === 0) {
-    if (emptyEl) emptyEl.style.display = "block";
-    return;
+  // Обновление заголовков дней в таблице
+  var theadRow = document.getElementById("table-head-row");
+  if (theadRow) {
+    theadRow.innerHTML =
+      '<th class="col-habit">Привычка</th>' +
+      '<th class="col-target">Цель</th>' +
+      week.map(function(d) {
+        return '<th class="col-day' + (d.isToday ? ' today' : '') + '">' + d.name + '<br><small>' + d.dateNumber + '</small></th>';
+      }).join("") +
+      '<th class="col-num">Факт</th>' +
+      '<th class="col-num">Осталось</th>' +
+      '<th class="col-progress">Прогресс</th>' +
+      '<th class="col-del"></th>';
   }
-  if (emptyEl) emptyEl.style.display = "none";
+
+  // Заполнение строк привычек
+  var tbody = document.getElementById("habits-body");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+
+  var totalFact = 0;
+  var totalTarget = 0;
+  var dayStats = [0, 0, 0, 0, 0, 0, 0];
 
   list.forEach(function(habit) {
-    var completedCount = 0;
-    week.forEach(function(d) {
-      if (historyData[d.iso + "_" + habit.id]) {
-        completedCount++;
-      }
-    });
+    var habitFact = 0;
+    var daysCellsHtml = "";
 
-    var card = document.createElement("div");
-    card.className = "habit-card";
-
-    var header = document.createElement("div");
-    header.className = "habit-header";
-    header.innerHTML =
-      '<div class="habit-title">' +
-        '<span class="habit-icon">' + (habit.icon || "✨") + '</span>' +
-        '<div>' +
-          '<h3>' + habit.name + '</h3>' +
-          '<span class="target-badge">Цель: ' + completedCount + '/' + habit.target + ' дн.</span>' +
-        '</div>' +
-      '</div>' +
-      '<button class="btn-delete" onclick="handleDeleteHabit(' + habit.id + ')">✕</button>';
-
-    var grid = document.createElement("div");
-    grid.className = "days-grid";
-
-    week.forEach(function(d) {
+    week.forEach(function(d, idx) {
       var isChecked = !!historyData[d.iso + "_" + habit.id];
-      var cell = document.createElement("div");
-      cell.className = "day-cell" + (d.isToday ? " today" : "") + (isChecked ? " checked" : "");
       if (isChecked) {
-        cell.style.backgroundColor = habit.color || "#3b82f6";
+        habitFact++;
+        dayStats[idx]++;
       }
-
-      cell.innerHTML =
-        '<span class="day-name">' + d.name + '</span>' +
-        '<span class="day-num">' + d.dateNumber + '</span>';
-
-      cell.onclick = function() {
-        handleDayToggle(habit.id, d.iso);
-      };
-      grid.appendChild(cell);
+      daysCellsHtml +=
+        '<td class="cell-check">' +
+          '<div class="check-box ' + (isChecked ? 'checked' : '') + '" onclick="toggleHabitDay(' + habit.id + ', \'' + d.iso + '\')">' +
+            (isChecked ? '✓' : '') +
+          '</div>' +
+        '</td>';
     });
 
-    var percent = Math.min(100, Math.round((completedCount / habit.target) * 100));
-    var progress = document.createElement("div");
-    progress.className = "progress-container";
-    progress.innerHTML =
-      '<div class="progress-bar" style="width: ' + percent + '%; background-color: ' + (habit.color || "#3b82f6") + ';"></div>';
+    totalFact += habitFact;
+    totalTarget += (habit.target || 0);
 
-    card.appendChild(header);
-    card.appendChild(grid);
-    card.appendChild(progress);
-    listEl.appendChild(card);
+    var left = Math.max(0, (habit.target || 0) - habitFact);
+    var percent = (habit.target > 0) ? Math.min(100, Math.round((habitFact / habit.target) * 100)) : 0;
+
+    var tr = document.createElement("tr");
+    tr.innerHTML =
+      '<td class="cell-name"><span class="h-icon">' + (habit.icon || "✨") + '</span> ' + habit.name + '</td>' +
+      '<td class="cell-center">' + habit.target + '</td>' +
+      daysCellsHtml +
+      '<td class="cell-center font-bold">' + habitFact + '</td>' +
+      '<td class="cell-center">' + left + '</td>' +
+      '<td class="cell-progress">' +
+        '<div class="mini-progress-bg"><div class="mini-progress-bar" style="width:' + percent + '%"></div></div>' +
+        '<span class="mini-percent">' + percent + '%</span>' +
+      '</td>' +
+      '<td class="cell-center"><button class="btn-del" onclick="deleteHabit(' + habit.id + ')">✕</button></td>';
+    tbody.appendChild(tr);
   });
+
+  // Верхняя статистика
+  var scoreEl = document.getElementById("total-done-ratio");
+  var percentEl = document.getElementById("total-percent-label");
+  if (scoreEl) scoreEl.textContent = totalFact + " / " + totalTarget;
+  var totalPercent = (totalTarget > 0) ? Math.min(100, Math.round((totalFact / totalTarget) * 100)) : 0;
+  if (percentEl) percentEl.textContent = totalPercent + "%";
+
+  // Столбчатый график по дням
+  var chartEl = document.getElementById("days-chart");
+  if (chartEl) {
+    chartEl.innerHTML = "";
+    var maxVal = Math.max.apply(null, dayStats.concat([1]));
+    week.forEach(function(d, idx) {
+      var heightPercent = Math.round((dayStats[idx] / maxVal) * 100);
+      var barWrap = document.createElement("div");
+      barWrap.className = "bar-column";
+      barWrap.innerHTML =
+        '<div class="bar-fill-wrap">' +
+          '<div class="bar-fill" style="height: ' + heightPercent + '%"></div>' +
+        '</div>' +
+        '<span class="bar-label ' + (d.isToday ? 'today' : '') + '">' + d.name + '</span>';
+      chartEl.appendChild(barWrap);
+    });
+  }
+}
+
+function renderMonthView() {
+  var list = (currentMode === "personal") ? personalHabits : coupleHabits;
+  var now = new Date();
+  var targetMonth = new Date(now.getFullYear(), now.getMonth() + currentMonthOffset, 1);
+  var monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+
+  var monthTitle = document.getElementById("month-title-label");
+  if (monthTitle) {
+    monthTitle.textContent = monthNames[targetMonth.getMonth()] + " " + targetMonth.getFullYear();
+  }
+
+  var itemsList = document.getElementById("month-items-list");
+  if (itemsList) {
+    itemsList.innerHTML = "";
+    var prefix = targetMonth.getFullYear() + "-" + String(targetMonth.getMonth() + 1).padStart(2, "0");
+
+    list.forEach(function(h) {
+      var count = 0;
+      Object.keys(historyData).forEach(function(k) {
+        if (k.startsWith(prefix) && k.endsWith("_" + h.id) && historyData[k]) {
+          count++;
+        }
+      });
+
+      var item = document.createElement("div");
+      item.className = "month-stat-row";
+      item.innerHTML =
+        '<span>' + (h.icon || "✨") + ' ' + h.name + '</span>' +
+        '<strong>' + count + ' раз(а)</strong>';
+      itemsList.appendChild(item);
+    });
+  }
 }
 
 // ==========================================
-// 4. ДЕЙСТВИЯ (С ЭКСПОРТОМ В WINDOW)
+// 4. ДЕЙСТВИЯ (ЭКСПОРТ В WINDOW)
 // ==========================================
 
-window.handleDayToggle = async function(habitId, isoDate) {
-  var key = isoDate + "_" + habitId;
-  var willBeActive = !historyData[key];
+window.switchMode = function(mode) {
+  currentMode = mode;
+  document.getElementById("mode-personal-btn").classList.toggle("active", mode === "personal");
+  document.getElementById("mode-couple-btn").classList.toggle("active", mode === "couple");
+  render();
+};
 
-  if (willBeActive) {
-    historyData[key] = true;
-  } else {
-    delete historyData[key];
-  }
-  renderApp();
+window.switchView = function(view) {
+  currentView = view;
+  document.getElementById("tab-week-btn").classList.toggle("active", view === "week");
+  document.getElementById("tab-month-btn").classList.toggle("active", view === "month");
+  document.getElementById("view-week").classList.toggle("active", view === "week");
+  document.getElementById("view-month").classList.toggle("active", view === "month");
+  render();
+};
 
-  var status = await apiToggleDay(habitId, isoDate);
-  if (status === null) {
-    if (willBeActive) delete historyData[key];
-    else historyData[key] = true;
-    renderApp();
+window.changeWeek = function(direction) {
+  currentWeekOffset += direction;
+  render();
+};
+
+window.goToCurrentWeek = function() {
+  currentWeekOffset = 0;
+  render();
+};
+
+window.changeMonth = function(direction) {
+  currentMonthOffset += direction;
+  render();
+};
+
+window.openAddModal = function() {
+  var modal = document.getElementById("add-modal");
+  if (modal) modal.classList.add("active");
+  var input = document.getElementById("habit-name-input");
+  if (input) input.value = "";
+};
+
+window.closeAddModal = function() {
+  var modal = document.getElementById("add-modal");
+  if (modal) modal.classList.remove("active");
+};
+
+window.handleModalOverlayClick = function(e) {
+  if (e.target.id === "add-modal") {
+    window.closeAddModal();
   }
 };
 
-window.handleDeleteHabit = async function(habitId) {
-  if (!confirm("Удалить эту цель?")) return;
-
-  if (currentTab === "personal") {
-    personalHabits = personalHabits.filter(function(h) { return h.id !== habitId; });
-  } else {
-    coupleHabits = coupleHabits.filter(function(h) { return h.id !== habitId; });
-  }
-  renderApp();
-  await apiDeleteHabit(habitId);
-};
-
-window.openModal = function() {
-  var modal = document.getElementById("habitModal");
-  if (modal) modal.style.display = "flex";
-  var nameInput = document.getElementById("habitName");
-  if (nameInput) nameInput.value = "";
-};
-
-window.closeModal = function() {
-  var modal = document.getElementById("habitModal");
-  if (modal) modal.style.display = "none";
+window.pickIcon = function(element) {
+  document.querySelectorAll(".icon-opt").forEach(function(el) {
+    el.classList.remove("selected");
+  });
+  element.classList.add("selected");
+  selectedIcon = element.innerText.trim();
 };
 
 window.saveNewHabit = async function() {
-  var nameInput = document.getElementById("habitName");
-  var iconInput = document.getElementById("habitIcon");
-  var targetInput = document.getElementById("habitTarget");
-  var colorInput = document.getElementById("habitColor");
-
-  var name = nameInput ? nameInput.value.trim() : "";
+  var input = document.getElementById("habit-name-input");
+  var name = input ? input.value.trim() : "";
   if (!name) {
-    alert("Введите название цели!");
+    alert("Введите название привычки!");
     return;
   }
+
+  var targetSlider = document.getElementById("habit-target-input");
+  var targetVal = targetSlider ? parseInt(targetSlider.value) : 3;
 
   var newHabit = {
     user_id: CURRENT_USER_ID,
     name: name,
-    icon: (iconInput && iconInput.value.trim()) ? iconInput.value.trim() : "🎯",
-    target: (targetInput && parseInt(targetInput.value)) ? parseInt(targetInput.value) : 3,
-    color: (colorInput && colorInput.value) ? colorInput.value : "#3b82f6",
-    is_couple: (currentTab === "couple" ? 1 : 0)
+    icon: selectedIcon,
+    target: targetVal,
+    color: "#6366f1",
+    is_couple: (currentMode === "couple" ? 1 : 0)
   };
 
-  window.closeModal();
+  window.closeAddModal();
 
   var createdId = await apiAddHabit(newHabit);
   newHabit.id = createdId || Date.now();
 
-  if (currentTab === "personal") {
+  if (currentMode === "personal") {
     personalHabits.push(newHabit);
   } else {
     coupleHabits.push(newHabit);
   }
 
-  renderApp();
+  render();
 };
 
-window.setTab = function(tab) {
-  currentTab = tab;
-  var buttons = document.querySelectorAll(".tab-btn");
-  buttons.forEach(function(btn) {
-    btn.classList.toggle("active", btn.getAttribute("data-tab") === tab);
-  });
-  renderApp();
-};
+window.toggleHabitDay = async function(habitId, isoDate) {
+  var key = isoDate + "_" + habitId;
+  var willBeActive = !historyData[key];
 
-window.changeWeek = function(direction) {
-  currentWeekOffset += direction;
-  renderApp();
-};
+  if (willBeActive) {
+    historyData[key] = true;
+    if (window.confetti) {
+      window.confetti({ particleCount: 35, spread: 60, origin: { y: 0.8 } });
+    }
+  } else {
+    delete historyData[key];
+  }
+  render();
 
-// Алиасы для функций модального окна и действий под твой HTML
-window.openAddModal = function() {
-  var modal = document.getElementById("addModal") || document.getElementById("habitModal");
-  if (modal) {
-    modal.style.display = "flex";
-    modal.classList.add("active");
+  var status = await apiToggleDay(habitId, isoDate);
+  if (status === null) {
+    if (willBeActive) delete historyData[key];
+    else historyData[key] = true;
+    render();
   }
 };
 
-window.closeAddModal = function() {
-  var modal = document.getElementById("addModal") || document.getElementById("habitModal");
-  if (modal) {
-    modal.style.display = "none";
-    modal.classList.remove("active");
+window.deleteHabit = async function(habitId) {
+  if (!confirm("Удалить эту привычку?")) return;
+
+  if (currentMode === "personal") {
+    personalHabits = personalHabits.filter(function(h) { return h.id !== habitId; });
+  } else {
+    coupleHabits = coupleHabits.filter(function(h) { return h.id !== habitId; });
   }
+  render();
+  await apiDeleteHabit(habitId);
 };
 
-// Если в HTML кнопка называется openModal / closeModal
-window.openModal = window.openAddModal;
-window.closeModal = window.closeAddModal;
-
-// Запуск при загрузке документа
+// Запуск при старте
 document.addEventListener("DOMContentLoaded", function() {
   loadServerState();
 });
