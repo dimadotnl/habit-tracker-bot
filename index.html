@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Трекер привычек и целей</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+</head>
+<body>
+
+  <div class="dashboard-wrapper">
+    <!-- УНИВЕРСАЛЬНЫЙ ПЕРЕКЛЮЧАТЕЛЬ РЕЖИМА -->
+    <div class="mode-selector">
+      <button class="mode-btn active" id="mode-personal-btn" onclick="switchMode('personal')">
+        <span>👤</span> Личные
+      </button>
+      <button class="mode-btn" id="mode-couple-btn" onclick="switchMode('couple')">
+        <span id="couple-tab-icon">👥</span> <span id="couple-tab-title">Совместные</span>
+      </button>
+    </div>
+
+    <!-- ПЕРЕКЛЮЧАТЕЛЬ ЭКРАНОВ: НЕДЕЛЯ / МЕСЯЦ -->
+    <nav class="view-tabs">
+      <button class="tab-btn active" id="tab-week-btn" onclick="switchView('week')">📅 Недельный трекер</button>
+      <button class="tab-btn" id="tab-month-btn" onclick="switchView('month')">📊 Анализ месяца</button>
+    </nav>
+
+    <!-- ==================== ЭКРАН 1: НЕДЕЛЯ ==================== -->
+    <div id="view-week" class="view-container active">
+      <!-- НАВИГАЦИЯ ПО НЕДЕЛЯМ -->
+      <div class="calendar-nav">
+        <button class="nav-arrow-btn" onclick="changeWeek(-1)">←</button>
+        <div class="week-label-box">
+          <span class="week-title" id="week-dates-label">...</span>
+          <button class="btn-today" onclick="goToCurrentWeek()">Сегодня</button>
+        </div>
+        <button class="nav-arrow-btn" onclick="changeWeek(1)">→</button>
+      </div>
+
+      <!-- СТАТИСТИКА И СТОЛБЧАТЫЙ ГРАФИК ДНЕЙ -->
+      <header class="top-stats-panel">
+        <div class="summary-card">
+          <span class="panel-subtitle">Прогресс недели</span>
+          <div class="big-score" id="total-done-ratio">0 / 0</div>
+          <div class="big-percent" id="total-percent-label">0%</div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-header">
+            <span class="panel-subtitle">Выполнено по дням</span>
+          </div>
+          <div class="bar-chart" id="days-chart"></div>
+        </div>
+      </header>
+
+      <!-- ТАБЛИЦА ПРИВЫЧЕК -->
+      <main class="table-container">
+        <div class="table-scroll">
+          <table class="habit-table">
+            <thead>
+              <tr id="table-head-row">
+                <th class="col-habit">Привычка</th>
+                <th class="col-target">Цель</th>
+                <th class="col-num">Факт</th>
+                <th class="col-num">Осталось</th>
+                <th class="col-progress">Прогресс</th>
+                <th class="col-del"></th>
+              </tr>
+            </thead>
+            <tbody id="habits-body"></tbody>
+          </table>
+        </div>
+      </main>
+
+      <!-- ПАНЕЛЬ ДОБАВЛЕНИЯ ПРИВЫЧКИ -->
+      <div class="action-bar">
+        <button class="btn-add" id="btn-add-label" onclick="openAddModal()">+ Добавить привычку</button>
+      </div>
+    </div>
+
+    <!-- ==================== ЭКРАН 2: АНАЛИЗ МЕСЯЦА ==================== -->
+    <div id="view-month" class="view-container">
+      <div class="calendar-nav">
+        <button class="nav-arrow-btn" onclick="changeMonth(-1)">←</button>
+        <span class="month-title" id="month-title-label">Сентябрь 2026</span>
+        <button class="nav-arrow-btn" onclick="changeMonth(1)">→</button>
+      </div>
+
+      <div class="month-dashboard">
+        <div class="chart-box-pie">
+          <h3>Баланс за месяц</h3>
+          <div class="canvas-wrap">
+            <canvas id="month-pie-canvas" width="280" height="280"></canvas>
+          </div>
+        </div>
+
+        <div class="month-stats-card">
+          <h3>Итоги по целям</h3>
+          <div class="month-items-list" id="month-items-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- МОДАЛЬНОЕ ОКНО СОЗДАНИЯ ПРИВЫЧКИ -->
+  <div class="modal-overlay" id="add-modal" onclick="handleModalOverlayClick(event)">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modal-heading">Новая цель</h3>
+        <button class="modal-close" onclick="closeAddModal()">✕</button>
+      </div>
+
+      <div class="form-group">
+        <label>Название:</label>
+        <input type="text" id="habit-name-input" placeholder="Например: Романтический ужин или Кодить" maxlength="35">
+      </div>
+
+      <div class="form-group">
+        <label>Иконка:</label>
+        <div class="icon-picker" id="icon-picker">
+          <span class="icon-opt selected" onclick="pickIcon(this)">🏋️</span>
+          <span class="icon-opt" onclick="pickIcon(this)">💻</span>
+          <span class="icon-opt" onclick="pickIcon(this)">📖</span>
+          <span class="icon-opt" onclick="pickIcon(this)">🍕</span>
+          <span class="icon-opt" onclick="pickIcon(this)">🎬</span>
+          <span class="icon-opt" onclick="pickIcon(this)">🚗</span>
+          <span class="icon-opt" onclick="pickIcon(this)">👩‍❤️‍👨</span>
+          <span class="icon-opt" onclick="pickIcon(this)">☕</span>
+          <span class="icon-opt" onclick="pickIcon(this)">✨</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Цель (раз в неделю):</label>
+        <div class="target-slider-wrap">
+          <input type="range" id="habit-target-input" min="1" max="7" value="3" oninput="document.getElementById('target-val').innerText = this.value">
+          <div class="target-val-label"><span id="target-val">3</span> раз(а) в неделю</div>
+        </div>
+      </div>
+
+      <button class="btn-create-habit" onclick="saveNewHabit()">Создать</button>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
