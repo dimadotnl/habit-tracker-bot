@@ -2,23 +2,18 @@ const tg = window.Telegram?.WebApp;
 if (tg) tg.expand();
 
 // ==========================================
-// 1. ХРАНИЛИЩЕ ДАННЫХ
+// 1. ХРАНИЛИЩЕ ДАННЫХ (ЧИСТЫЙ СТАРТ С НУЛЯ)
 // ==========================================
-// Дефолтные личные привычки
-const DEFAULT_PERSONAL_HABITS = [
-  { id: 101, name: "Тренировка в зале", icon: "🏋️", target: 3, color: "#ef4444" },
-  { id: 102, name: "Чтение 30 минут", icon: "📖", target: 5, color: "#3b82f6" },
-  { id: 103, name: "Писать код на Python", icon: "💻", target: 5, color: "#10b981" },
-  { id: 104, name: "День без сахара", icon: "🥗", target: 6, color: "#8b5cf6" }
-];
+// Сброс старых предустановленных данных при первом переходе на новую версию
+if (!localStorage.getItem('habits_v2_clean')) {
+  localStorage.removeItem('my_personal_habits');
+  localStorage.removeItem('my_couple_habits');
+  localStorage.setItem('habits_v2_clean', 'true');
+}
 
-// Дефолтные совместные цели
-const DEFAULT_COUPLE_HABITS = [
-  { id: 201, name: "Киновечер вместе", icon: "🎬", target: 2, color: "#ec4899" },
-  { id: 202, name: "Долгая прогулка", icon: "🚶", target: 3, color: "#f59e0b" },
-  { id: 203, name: "Поездка на машине", icon: "🚗", target: 1, color: "#38bdf8" },
-  { id: 204, name: "Приготовить новое блюдо", icon: "🍕", target: 2, color: "#10b981" }
-];
+// Пустые массивы — пользователь создаёт всё сам
+const DEFAULT_PERSONAL_HABITS = [];
+const DEFAULT_COUPLE_HABITS = [];
 
 let currentMode = 'personal'; // 'personal' или 'couple'
 
@@ -160,6 +155,17 @@ function renderWeekView() {
   const tbody = document.getElementById('habits-body');
   tbody.innerHTML = '';
 
+  // Если привычек нет — информационная плашка
+  if (activeHabits.length === 0) {
+    const emptyRow = document.createElement('tr');
+    emptyRow.innerHTML = `
+      <td colspan="12" style="padding: 35px 15px; color: #64748b; font-size: 0.88rem; font-weight: 500;">
+        Целей пока нет. Нажми «${currentMode === 'personal' ? '+ Добавить цель' : '+ Добавить совместную цель'}», чтобы начать ✨
+      </td>
+    `;
+    tbody.appendChild(emptyRow);
+  }
+
   let weekTotalTarget = 0;
   let weekTotalDone = 0;
   const dayDoneTotals = [0, 0, 0, 0, 0, 0, 0];
@@ -221,7 +227,7 @@ function renderWeekView() {
   document.getElementById('total-done-ratio').innerText = `${weekTotalDone} / ${weekTotalTarget}`;
   document.getElementById('total-percent-label').innerText = `${overallPercent}%`;
 
-  // 4. Столбчатый график с динамическим светофором (красный -> жёлтый -> зелёный)
+  // 4. Столбчатый график с динамическим светофором
   const chartBox = document.getElementById('days-chart');
   chartBox.innerHTML = '';
   const maxInDay = Math.max(activeHabits.length, 1);
@@ -229,7 +235,7 @@ function renderWeekView() {
   dayDoneTotals.forEach((count, i) => {
     const col = document.createElement('div');
     col.className = 'chart-col';
-    const barHeightPercent = (count / maxInDay) * 100;
+    const barHeightPercent = activeHabits.length > 0 ? (count / maxInDay) * 100 : 0;
 
     let colorClass = 'lvl-low';
     if (barHeightPercent >= 70) {
@@ -291,6 +297,16 @@ function renderMonthView() {
 
   const listContainer = document.getElementById('month-items-list');
   listContainer.innerHTML = '';
+
+  if (activeHabits.length === 0) {
+    listContainer.innerHTML = `
+      <div style="padding: 20px; text-align: center; color: #64748b; font-size: 0.85rem;">
+        В этом пространстве ещё нет целей
+      </div>
+    `;
+    drawMonthPieChart([]);
+    return;
+  }
 
   const chartSegments = [];
   const approxWeeks = daysInMonth / 7;
