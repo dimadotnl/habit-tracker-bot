@@ -309,6 +309,27 @@ window.changeWeek = function(direction) {
   renderApp();
 };
 
+// Алиасы для функций модального окна и действий под твой HTML
+window.openAddModal = function() {
+  var modal = document.getElementById("addModal") || document.getElementById("habitModal");
+  if (modal) {
+    modal.style.display = "flex";
+    modal.classList.add("active");
+  }
+};
+
+window.closeAddModal = function() {
+  var modal = document.getElementById("addModal") || document.getElementById("habitModal");
+  if (modal) {
+    modal.style.display = "none";
+    modal.classList.remove("active");
+  }
+};
+
+// Если в HTML кнопка называется openModal / closeModal
+window.openModal = window.openAddModal;
+window.closeModal = window.closeAddModal;
+
 // Запуск при загрузке документа
 document.addEventListener("DOMContentLoaded", function() {
   loadServerState();
