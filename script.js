@@ -1,4 +1,4 @@
-const API_BASE_URL = "https://b7ee4e55f12998.lhr.life";
+const API_BASE_URL = "https://subtotal-lip-carmaker.ngrok-free.dev";
 
 const tg = window.Telegram?.WebApp;
 if (tg) tg.expand();
