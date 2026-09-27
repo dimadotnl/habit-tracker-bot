@@ -32,7 +32,7 @@ var API_HEADERS = {
 };
 
 // ==========================================
-// 1. СЕТЕВЫЕ ЗАПРОСЫ К БЭКЕНДУ
+// 1. СЕТЕВЫЕ ЗАПРОСЫ
 // ==========================================
 
 async function loadServerState() {
@@ -64,7 +64,7 @@ async function apiAddHabit(habitData) {
       return data.id;
     }
   } catch (err) {
-    console.error("Ошибка добавления привычки:", err);
+    console.error("Ошибка добавления:", err);
   }
   return null;
 }
@@ -81,7 +81,7 @@ async function apiToggleDay(habitId, isoDate) {
       return data.status;
     }
   } catch (err) {
-    console.error("Ошибка переключения дня:", err);
+    console.error("Ошибка отметки дня:", err);
   }
   return null;
 }
@@ -99,7 +99,7 @@ async function apiDeleteHabit(habitId) {
 }
 
 // ==========================================
-// 2. РАСЧЕТ ДАТ
+// 2. ДАТЫ И НЕДЕЛИ
 // ==========================================
 
 function getWeekDates(offset) {
@@ -128,7 +128,7 @@ function getWeekDates(offset) {
 }
 
 // ==========================================
-// 3. ОТРИСОВКА ИНТЕРФЕЙСА
+// 3. ОТРИСОВКА ИНТЕРФЕЙСА ПОД STYLE.CSS
 // ==========================================
 
 function render() {
@@ -143,7 +143,7 @@ function renderWeekView() {
   var list = (currentMode === "personal") ? personalHabits : coupleHabits;
   var week = getWeekDates(currentWeekOffset);
 
-  // Обновление заголовка дат
+  // Период недели в шапке
   var weekDatesLabel = document.getElementById("week-dates-label");
   if (weekDatesLabel && week.length === 7) {
     var startMonth = String(new Date(week[0].iso).getMonth() + 1).padStart(2, "0");
@@ -151,14 +151,14 @@ function renderWeekView() {
     weekDatesLabel.textContent = week[0].dateNumber + "." + startMonth + " — " + week[6].dateNumber + "." + endMonth;
   }
 
-  // Обновление заголовков дней в таблице
+  // Заголовки таблицы
   var theadRow = document.getElementById("table-head-row");
   if (theadRow) {
     theadRow.innerHTML =
       '<th class="col-habit">Привычка</th>' +
       '<th class="col-target">Цель</th>' +
       week.map(function(d) {
-        return '<th class="col-day' + (d.isToday ? ' today' : '') + '">' + d.name + '<br><small>' + d.dateNumber + '</small></th>';
+        return '<th class="' + (d.isToday ? 'is-today' : '') + '">' + d.name + '<small>' + d.dateNumber + '</small></th>';
       }).join("") +
       '<th class="col-num">Факт</th>' +
       '<th class="col-num">Осталось</th>' +
@@ -166,7 +166,6 @@ function renderWeekView() {
       '<th class="col-del"></th>';
   }
 
-  // Заполнение строк привычек
   var tbody = document.getElementById("habits-body");
   if (!tbody) return;
   tbody.innerHTML = "";
@@ -186,8 +185,8 @@ function renderWeekView() {
         dayStats[idx]++;
       }
       daysCellsHtml +=
-        '<td class="cell-check">' +
-          '<div class="check-box ' + (isChecked ? 'checked' : '') + '" onclick="toggleHabitDay(' + habit.id + ', \'' + d.iso + '\')">' +
+        '<td>' +
+          '<div class="custom-chk ' + (isChecked ? 'active' : '') + '" onclick="toggleHabitDay(' + habit.id + ', \'' + d.iso + '\')">' +
             (isChecked ? '✓' : '') +
           '</div>' +
         '</td>';
@@ -201,16 +200,20 @@ function renderWeekView() {
 
     var tr = document.createElement("tr");
     tr.innerHTML =
-      '<td class="cell-name"><span class="h-icon">' + (habit.icon || "✨") + '</span> ' + habit.name + '</td>' +
-      '<td class="cell-center">' + habit.target + '</td>' +
+      '<td class="col-habit">' + (habit.icon || "✨") + ' ' + habit.name + '</td>' +
+      '<td class="col-target">' + habit.target + '</td>' +
       daysCellsHtml +
-      '<td class="cell-center font-bold">' + habitFact + '</td>' +
-      '<td class="cell-center">' + left + '</td>' +
-      '<td class="cell-progress">' +
-        '<div class="mini-progress-bg"><div class="mini-progress-bar" style="width:' + percent + '%"></div></div>' +
-        '<span class="mini-percent">' + percent + '%</span>' +
+      '<td class="col-num">' + habitFact + '</td>' +
+      '<td class="col-num">' + left + '</td>' +
+      '<td>' +
+        '<div class="row-progress-box">' +
+          '<div class="row-bar-bg"><div class="row-bar-fill" style="width:' + percent + '%"></div></div>' +
+          '<span class="row-bar-percent">' + percent + '%</span>' +
+        '</div>' +
       '</td>' +
-      '<td class="cell-center"><button class="btn-del" onclick="deleteHabit(' + habit.id + ')">✕</button></td>';
+      '<td class="col-del">' +
+        '<button class="btn-del-habit" title="Удалить" onclick="deleteHabit(' + habit.id + ')">✕</button>' +
+      '</td>';
     tbody.appendChild(tr);
   });
 
@@ -221,21 +224,29 @@ function renderWeekView() {
   var totalPercent = (totalTarget > 0) ? Math.min(100, Math.round((totalFact / totalTarget) * 100)) : 0;
   if (percentEl) percentEl.textContent = totalPercent + "%";
 
-  // Столбчатый график по дням
+  // Столбчатый график со светофором
   var chartEl = document.getElementById("days-chart");
   if (chartEl) {
     chartEl.innerHTML = "";
     var maxVal = Math.max.apply(null, dayStats.concat([1]));
+
     week.forEach(function(d, idx) {
-      var heightPercent = Math.round((dayStats[idx] / maxVal) * 100);
-      var barWrap = document.createElement("div");
-      barWrap.className = "bar-column";
-      barWrap.innerHTML =
-        '<div class="bar-fill-wrap">' +
-          '<div class="bar-fill" style="height: ' + heightPercent + '%"></div>' +
+      var count = dayStats[idx];
+      var heightPercent = Math.max(8, Math.round((count / maxVal) * 100));
+
+      var lvlClass = "lvl-low";
+      if (count >= 3) lvlClass = "lvl-high";
+      else if (count >= 1) lvlClass = "lvl-mid";
+
+      var col = document.createElement("div");
+      col.className = "chart-col";
+      col.innerHTML =
+        '<span class="chart-count">' + (count > 0 ? count : '') + '</span>' +
+        '<div class="chart-bar-wrap">' +
+          '<div class="chart-bar-fill ' + lvlClass + '" style="height: ' + heightPercent + '%"></div>' +
         '</div>' +
-        '<span class="bar-label ' + (d.isToday ? 'today' : '') + '">' + d.name + '</span>';
-      chartEl.appendChild(barWrap);
+        '<span class="chart-label">' + d.name + '</span>';
+      chartEl.appendChild(col);
     });
   }
 }
@@ -264,33 +275,48 @@ function renderMonthView() {
         }
       });
 
+      var maxExpect = (h.target || 3) * 4;
+      var fillPercent = Math.min(100, Math.round((count / maxExpect) * 100));
+
       var item = document.createElement("div");
       item.className = "month-stat-row";
       item.innerHTML =
-        '<span>' + (h.icon || "✨") + ' ' + h.name + '</span>' +
-        '<strong>' + count + ' раз(а)</strong>';
+        '<div class="month-stat-top">' +
+          '<span>' + (h.icon || "✨") + ' ' + h.name + '</span>' +
+          '<strong>' + count + ' выполнено</strong>' +
+        '</div>' +
+        '<div class="month-stat-bar-bg">' +
+          '<div class="month-stat-bar-fill" style="width: ' + fillPercent + '%; background: #10b981;"></div>' +
+        '</div>';
       itemsList.appendChild(item);
     });
   }
 }
 
 // ==========================================
-// 4. ДЕЙСТВИЯ (ЭКСПОРТ В WINDOW)
+// 4. ДЕЙСТВИЯ (ОБРАБОТЧИКИ СОБЫТИЙ)
 // ==========================================
 
 window.switchMode = function(mode) {
   currentMode = mode;
-  document.getElementById("mode-personal-btn").classList.toggle("active", mode === "personal");
-  document.getElementById("mode-couple-btn").classList.toggle("active", mode === "couple");
+  var pBtn = document.getElementById("mode-personal-btn");
+  var cBtn = document.getElementById("mode-couple-btn");
+  if (pBtn) pBtn.classList.toggle("active", mode === "personal");
+  if (cBtn) cBtn.classList.toggle("active", mode === "couple");
   render();
 };
 
 window.switchView = function(view) {
   currentView = view;
-  document.getElementById("tab-week-btn").classList.toggle("active", view === "week");
-  document.getElementById("tab-month-btn").classList.toggle("active", view === "month");
-  document.getElementById("view-week").classList.toggle("active", view === "week");
-  document.getElementById("view-month").classList.toggle("active", view === "month");
+  var wBtn = document.getElementById("tab-week-btn");
+  var mBtn = document.getElementById("tab-month-btn");
+  var wView = document.getElementById("view-week");
+  var mView = document.getElementById("view-month");
+
+  if (wBtn) wBtn.classList.toggle("active", view === "week");
+  if (mBtn) mBtn.classList.toggle("active", view === "month");
+  if (wView) wView.classList.toggle("active", view === "week");
+  if (mView) mView.classList.toggle("active", view === "month");
   render();
 };
 
@@ -403,7 +429,7 @@ window.deleteHabit = async function(habitId) {
   await apiDeleteHabit(habitId);
 };
 
-// Запуск при старте
+// Запуск приложения
 document.addEventListener("DOMContentLoaded", function() {
   loadServerState();
 });
