@@ -1,4 +1,4 @@
-const API_BASE_URL = "https://9cfdc29ea1b2dc.lhr.life";
+const API_BASE_URL = "https://b7ee4e55f12998.lhr.life";
 
 const tg = window.Telegram?.WebApp;
 if (tg) tg.expand();
