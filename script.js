@@ -47,7 +47,7 @@ async function loadServerState() {
       historyData = data.historyData || {};
     }
   } catch (err) {
-    console.error("Ошибка загрузки данных:", err);
+    console.error("Ошибка загрузки:", err);
   }
   render();
 }
@@ -64,7 +64,7 @@ async function apiAddHabit(habitData) {
       return data.id;
     }
   } catch (err) {
-    console.error("Ошибка добавления:", err);
+    console.error("Ошибка apiAddHabit:", err);
   }
   return null;
 }
@@ -77,11 +77,10 @@ async function apiToggleDay(habitId, isoDate) {
       body: JSON.stringify({ habit_id: habitId, iso_date: isoDate })
     });
     if (res.ok) {
-      var data = await res.json();
-      return data.status;
+      return true;
     }
   } catch (err) {
-    console.error("Ошибка отметки дня:", err);
+    console.error("Ошибка apiToggleDay:", err);
   }
   return null;
 }
@@ -94,12 +93,12 @@ async function apiDeleteHabit(habitId) {
       body: JSON.stringify({ habit_id: habitId })
     });
   } catch (err) {
-    console.error("Ошибка удаления:", err);
+    console.error("Ошибка apiDeleteHabit:", err);
   }
 }
 
 // ==========================================
-// 2. ДАТЫ И НЕДЕЛИ
+// 2. ДАТЫ
 // ==========================================
 
 function getWeekDates(offset) {
@@ -128,7 +127,7 @@ function getWeekDates(offset) {
 }
 
 // ==========================================
-// 3. ОТРИСОВКА ИНТЕРФЕЙСА ПОД STYLE.CSS
+// 3. ОТРИСОВКА
 // ==========================================
 
 function render() {
@@ -143,7 +142,6 @@ function renderWeekView() {
   var list = (currentMode === "personal") ? personalHabits : coupleHabits;
   var week = getWeekDates(currentWeekOffset);
 
-  // Период недели в шапке
   var weekDatesLabel = document.getElementById("week-dates-label");
   if (weekDatesLabel && week.length === 7) {
     var startMonth = String(new Date(week[0].iso).getMonth() + 1).padStart(2, "0");
@@ -151,7 +149,6 @@ function renderWeekView() {
     weekDatesLabel.textContent = week[0].dateNumber + "." + startMonth + " — " + week[6].dateNumber + "." + endMonth;
   }
 
-  // Заголовки таблицы
   var theadRow = document.getElementById("table-head-row");
   if (theadRow) {
     theadRow.innerHTML =
@@ -217,26 +214,35 @@ function renderWeekView() {
     tbody.appendChild(tr);
   });
 
-  // Верхняя статистика
   var scoreEl = document.getElementById("total-done-ratio");
   var percentEl = document.getElementById("total-percent-label");
   if (scoreEl) scoreEl.textContent = totalFact + " / " + totalTarget;
   var totalPercent = (totalTarget > 0) ? Math.min(100, Math.round((totalFact / totalTarget) * 100)) : 0;
   if (percentEl) percentEl.textContent = totalPercent + "%";
 
-  // Столбчатый график со светофором
+  // СТОЛБИКИ ГРАФИКА: пропорциональная высота и честный светофор
   var chartEl = document.getElementById("days-chart");
   if (chartEl) {
     chartEl.innerHTML = "";
-    var maxVal = Math.max.apply(null, dayStats.concat([1]));
+    var totalHabitsCount = list.length; // Общее количество привычек (например, 3)
 
     week.forEach(function(d, idx) {
       var count = dayStats[idx];
-      var heightPercent = Math.max(8, Math.round((count / maxVal) * 100));
+      var heightPercent = 0;
+      var lvlClass = "";
 
-      var lvlClass = "lvl-low";
-      if (count >= 3) lvlClass = "lvl-high";
-      else if (count >= 1) lvlClass = "lvl-mid";
+      if (count > 0 && totalHabitsCount > 0) {
+        // Честная высота: 1 из 3 -> 33%, 2 из 3 -> 66%, 3 из 3 -> 100%
+        heightPercent = Math.min(100, Math.round((count / totalHabitsCount) * 100));
+
+        if (heightPercent >= 100) {
+          lvlClass = "lvl-high"; // Все закрыты -> зеленый
+        } else if (heightPercent >= 50) {
+          lvlClass = "lvl-mid";  // 50% и более -> желтый
+        } else {
+          lvlClass = "lvl-low";  // Меньше половины -> красный
+        }
+      }
 
       var col = document.createElement("div");
       col.className = "chart-col";
@@ -263,38 +269,101 @@ function renderMonthView() {
   }
 
   var itemsList = document.getElementById("month-items-list");
-  if (itemsList) {
-    itemsList.innerHTML = "";
-    var prefix = targetMonth.getFullYear() + "-" + String(targetMonth.getMonth() + 1).padStart(2, "0");
+  if (!itemsList) return;
+  itemsList.innerHTML = "";
 
-    list.forEach(function(h) {
-      var count = 0;
-      Object.keys(historyData).forEach(function(k) {
-        if (k.startsWith(prefix) && k.endsWith("_" + h.id) && historyData[k]) {
-          count++;
-        }
-      });
+  var prefix = targetMonth.getFullYear() + "-" + String(targetMonth.getMonth() + 1).padStart(2, "0");
+  var pieData = [];
+  var colors = ["#10b981", "#3b82f6", "#f59e0b", "#ec4899", "#8b5cf6", "#06b6d4"];
 
-      var maxExpect = (h.target || 3) * 4;
-      var fillPercent = Math.min(100, Math.round((count / maxExpect) * 100));
-
-      var item = document.createElement("div");
-      item.className = "month-stat-row";
-      item.innerHTML =
-        '<div class="month-stat-top">' +
-          '<span>' + (h.icon || "✨") + ' ' + h.name + '</span>' +
-          '<strong>' + count + ' выполнено</strong>' +
-        '</div>' +
-        '<div class="month-stat-bar-bg">' +
-          '<div class="month-stat-bar-fill" style="width: ' + fillPercent + '%; background: #10b981;"></div>' +
-        '</div>';
-      itemsList.appendChild(item);
+  list.forEach(function(h, index) {
+    var count = 0;
+    Object.keys(historyData).forEach(function(k) {
+      if (k.startsWith(prefix) && k.endsWith("_" + h.id) && historyData[k]) {
+        count++;
+      }
     });
+
+    if (count > 0) {
+      pieData.push({
+        label: h.name,
+        value: count,
+        color: colors[index % colors.length]
+      });
+    }
+
+    var maxExpect = (h.target || 3) * 4;
+    var fillPercent = Math.min(100, Math.round((count / maxExpect) * 100));
+
+    var item = document.createElement("div");
+    item.className = "month-stat-row";
+    item.innerHTML =
+      '<div class="month-stat-top">' +
+        '<span>' + (h.icon || "✨") + ' ' + h.name + '</span>' +
+        '<strong>' + count + ' выполнено</strong>' +
+      '</div>' +
+      '<div class="month-stat-bar-bg">' +
+        '<div class="month-stat-bar-fill" style="width: ' + fillPercent + '%; background: #10b981;"></div>' +
+      '</div>';
+    itemsList.appendChild(item);
+  });
+
+  drawMonthPieChart(pieData);
+}
+
+// Отрисовка круговой диаграммы месяца
+function drawMonthPieChart(segments) {
+  var canvas = document.getElementById("month-pie-canvas");
+  if (!canvas) return;
+  var ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  var total = segments.reduce(function(sum, s) { return sum + s.value; }, 0);
+  var centerX = canvas.width / 2;
+  var centerY = canvas.height / 2;
+  var radius = Math.min(centerX, centerY) - 15;
+
+  if (total === 0) {
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+    ctx.strokeStyle = "#273142";
+    ctx.lineWidth = 14;
+    ctx.stroke();
+
+    ctx.fillStyle = "#8da0b8";
+    ctx.font = "600 13px Montserrat, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("Нет данных", centerX, centerY);
+    return;
   }
+
+  var currentAngle = -0.5 * Math.PI;
+  segments.forEach(function(segment) {
+    var sliceAngle = (segment.value / total) * 2 * Math.PI;
+
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, currentAngle, currentAngle + sliceAngle);
+    ctx.strokeStyle = segment.color;
+    ctx.lineWidth = 18;
+    ctx.stroke();
+
+    currentAngle += sliceAngle;
+  });
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "700 18px Montserrat, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(total, centerX, centerY - 8);
+
+  ctx.fillStyle = "#8da0b8";
+  ctx.font = "500 11px Montserrat, sans-serif";
+  ctx.fillText("всего", centerX, centerY + 12);
 }
 
 // ==========================================
-// 4. ДЕЙСТВИЯ (ОБРАБОТЧИКИ СОБЫТИЙ)
+// 4. ДЕЙСТВИЯ
 // ==========================================
 
 window.switchMode = function(mode) {
@@ -409,12 +478,7 @@ window.toggleHabitDay = async function(habitId, isoDate) {
   }
   render();
 
-  var status = await apiToggleDay(habitId, isoDate);
-  if (status === null) {
-    if (willBeActive) delete historyData[key];
-    else historyData[key] = true;
-    render();
-  }
+  await apiToggleDay(habitId, isoDate);
 };
 
 window.deleteHabit = async function(habitId) {
@@ -429,7 +493,6 @@ window.deleteHabit = async function(habitId) {
   await apiDeleteHabit(habitId);
 };
 
-// Запуск приложения
 document.addEventListener("DOMContentLoaded", function() {
   loadServerState();
 });
