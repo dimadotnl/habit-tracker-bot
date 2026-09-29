@@ -2,7 +2,6 @@ import os
 import asyncio
 import logging
 import json
-import aiosqlite
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher, types
