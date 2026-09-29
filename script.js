@@ -1,498 +1,208 @@
-// URL туннеля ngrok
 var API_BASE_URL = "https://habit-tracker-bot-kgew.onrender.com";
+var tg = window.Telegram?.WebApp;
 
-// Инициализация Telegram WebApp
-var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
 if (tg) {
-  try {
-    tg.expand();
-    tg.ready();
-  } catch (e) {}
+  tg.expand();
 }
 
-var CURRENT_USER_ID = 12345;
-if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
-  CURRENT_USER_ID = tg.initDataUnsafe.user.id;
-}
+// Получаем реальный Telegram User ID (или тестовый для отладки в браузере)
+var USER_ID = tg?.initDataUnsafe?.user?.id || 556702536;
+var USER_NAME = tg?.initDataUnsafe?.user?.first_name || "Пользователь";
 
-// Состояние приложения
-var currentMode = "personal"; // "personal" или "couple"
-var currentView = "week";     // "week" или "month"
-var currentWeekOffset = 0;
-var currentMonthOffset = 0;
-
-var personalHabits = [];
-var coupleHabits = [];
-var historyData = {}; // { "YYYY-MM-DD_habitId": true }
-var selectedIcon = "🏋️";
-
-var API_HEADERS = {
-  "Content-Type": "application/json",
-  "ngrok-skip-browser-warning": "true"
+var currentTab = "my"; // 'my' или 'couple'
+var stateData = {
+  habits: [],
+  couple_habits: [],
+  history: {},
+  partner_name: null,
+  partner_id: null
 };
 
-// ==========================================
-// 1. СЕТЕВЫЕ ЗАПРОСЫ
-// ==========================================
-
-async function loadServerState() {
-  try {
-    var res = await fetch(API_BASE_URL + "/api/state?user_id=" + CURRENT_USER_ID, {
-      headers: { "ngrok-skip-browser-warning": "true" }
+// Генерация последних 5 дат (ISO: YYYY-MM-DD)
+function getLastDays(count = 5) {
+  const days = [];
+  for (let i = count - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    days.push({
+      iso: d.toISOString().split("T")[0],
+      name: d.toLocaleDateString("ru-RU", { weekday: "short" }),
+      num: d.getDate()
     });
-    if (res.ok) {
-      var data = await res.json();
-      personalHabits = data.personalHabits || [];
-      coupleHabits = data.coupleHabits || [];
-      historyData = data.historyData || {};
+  }
+  return days;
+}
+
+var lastDays = getLastDays(5);
+
+function renderDaysHeader() {
+  const header = document.getElementById("days-header");
+  header.innerHTML = "";
+  lastDays.forEach((day) => {
+    const col = document.createElement("div");
+    col.className = "day-col";
+    col.innerHTML = `<div>${day.name}</div><b>${day.num}</b>`;
+    header.appendChild(col);
+  });
+}
+
+// Отрисовка плашки статуса партнёра
+function renderPairBadge() {
+  const badge = document.getElementById("pair-badge");
+  if (stateData.partner_name) {
+    badge.className = "pair-badge linked";
+    badge.innerHTML = `<span>В паре с: <b>${stateData.partner_name}</b> 💕</span>`;
+  } else {
+    badge.className = "pair-badge";
+    badge.innerHTML = `
+      <span>Пара не подключена</span>
+      <button class="pair-btn" onclick="invitePartner()">Пригласить</button>
+    `;
+  }
+}
+
+function invitePartner() {
+  const inviteLink = `https://t.me/self_control_to_succesful_bot?start=pair_${USER_ID}`;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(inviteLink);
+    alert("Ссылка для добавления партнёра скопирована в буфер обмена! Отправьте её девушке в чат.");
+  } else {
+    prompt("Отправьте эту ссылку партнёру:", inviteLink);
+  }
+}
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById("tab-my").classList.toggle("active", tab === "my");
+  document.getElementById("tab-couple").classList.toggle("active", tab === "couple");
+  renderHabits();
+}
+
+function renderHabits() {
+  const container = document.getElementById("habits-list");
+  container.innerHTML = "";
+
+  const list = currentTab === "my" ? stateData.habits : stateData.couple_habits;
+
+  if (list.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; color: var(--text-sec); padding: 40px 0;">
+        ${currentTab === "my" ? "У вас пока нет личных привычек" : "У вас пока нет общих привычек"}
+      </div>
+    `;
+    return;
+  }
+
+  list.forEach((habit) => {
+    const card = document.createElement("div");
+    card.className = "habit-card";
+
+    const info = document.createElement("div");
+    info.className = "habit-info";
+    info.innerHTML = `
+      <div class="habit-icon">${habit.icon || "⭐"}</div>
+      <div class="habit-title">${habit.name}</div>
+    `;
+
+    const checks = document.createElement("div");
+    checks.className = "habit-checks";
+
+    lastDays.forEach((day) => {
+      const btn = document.createElement("button");
+      btn.className = "check-btn";
+      const key = `${day.iso}_${habit.id}`;
+      const isChecked = !!stateData.history[key];
+
+      if (isChecked) {
+        btn.classList.add("checked");
+        btn.innerText = "✓";
+      }
+
+      btn.onclick = () => toggleCheck(habit.id, day.iso);
+      checks.appendChild(btn);
+    });
+
+    card.appendChild(info);
+    card.appendChild(checks);
+    container.appendChild(card);
+  });
+}
+
+// Загрузка состояния с бэкенда
+async function loadState() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/state?user_id=${USER_ID}`);
+    const data = await res.json();
+    if (data.success) {
+      stateData = data;
+      renderPairBadge();
+      renderHabits();
     }
   } catch (err) {
     console.error("Ошибка загрузки:", err);
   }
-  render();
 }
 
-async function apiAddHabit(habitData) {
-  try {
-    var res = await fetch(API_BASE_URL + "/api/habit/add", {
-      method: "POST",
-      headers: API_HEADERS,
-      body: JSON.stringify(habitData)
-    });
-    if (res.ok) {
-      var data = await res.json();
-      return data.id;
-    }
-  } catch (err) {
-    console.error("Ошибка apiAddHabit:", err);
-  }
-  return null;
-}
+// Переключение галочки дня
+async function toggleCheck(habitId, isoDate) {
+  const key = `${isoDate}_${habitId}`;
+  stateData.history[key] = !stateData.history[key];
+  renderHabits();
 
-async function apiToggleDay(habitId, isoDate) {
   try {
-    var res = await fetch(API_BASE_URL + "/api/toggle", {
+    await fetch(`${API_BASE_URL}/api/toggle`, {
       method: "POST",
-      headers: API_HEADERS,
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ habit_id: habitId, iso_date: isoDate })
     });
-    if (res.ok) {
-      return true;
-    }
   } catch (err) {
-    console.error("Ошибка apiToggleDay:", err);
+    console.error("Ошибка переключения:", err);
+    stateData.history[key] = !stateData.history[key];
+    renderHabits();
   }
-  return null;
 }
 
-async function apiDeleteHabit(habitId) {
+// Модальное окно создания привычки
+function openAddModal() {
+  document.getElementById("modal-title").innerText =
+    currentTab === "my" ? "Новая личная привычка" : "Новая общая привычка 💕";
+  document.getElementById("modal").classList.add("active");
+  document.getElementById("habit-name").value = "";
+}
+
+function closeAddModal() {
+  document.getElementById("modal").classList.remove("active");
+}
+
+async function submitHabit() {
+  const name = document.getElementById("habit-name").value.trim();
+  const icon = document.getElementById("habit-icon").value.trim() || "⭐";
+  if (!name) return;
+
+  closeAddModal();
+
   try {
-    await fetch(API_BASE_URL + "/api/habit/delete", {
+    const res = await fetch(`${API_BASE_URL}/api/habit/add`, {
       method: "POST",
-      headers: API_HEADERS,
-      body: JSON.stringify({ habit_id: habitId })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: USER_ID,
+        name: name,
+        icon: icon,
+        target: 7,
+        color: currentTab === "couple" ? "#ff7675" : "#6c5ce7",
+        is_couple: currentTab === "couple"
+      })
     });
+    const result = await res.json();
+    if (result.success) {
+      await loadState();
+    }
   } catch (err) {
-    console.error("Ошибка apiDeleteHabit:", err);
+    console.error("Ошибка добавления привычки:", err);
   }
 }
 
-// ==========================================
-// 2. ДАТЫ
-// ==========================================
-
-function getWeekDates(offset) {
-  var now = new Date();
-  var day = now.getDay();
-  var diff = (day === 0 ? -6 : 1) - day;
-  var monday = new Date(now);
-  monday.setDate(now.getDate() + diff + (offset * 7));
-
-  var week = [];
-  var names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
-
-  for (var i = 0; i < 7; i++) {
-    var d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    var iso = d.toISOString().split("T")[0];
-    var todayIso = now.toISOString().split("T")[0];
-    week.push({
-      name: names[i],
-      dateNumber: d.getDate(),
-      iso: iso,
-      isToday: (iso === todayIso)
-    });
-  }
-  return week;
-}
-
-// ==========================================
-// 3. ОТРИСОВКА
-// ==========================================
-
-function render() {
-  if (currentView === "week") {
-    renderWeekView();
-  } else {
-    renderMonthView();
-  }
-}
-
-function renderWeekView() {
-  var list = (currentMode === "personal") ? personalHabits : coupleHabits;
-  var week = getWeekDates(currentWeekOffset);
-
-  var weekDatesLabel = document.getElementById("week-dates-label");
-  if (weekDatesLabel && week.length === 7) {
-    var startMonth = String(new Date(week[0].iso).getMonth() + 1).padStart(2, "0");
-    var endMonth = String(new Date(week[6].iso).getMonth() + 1).padStart(2, "0");
-    weekDatesLabel.textContent = week[0].dateNumber + "." + startMonth + " — " + week[6].dateNumber + "." + endMonth;
-  }
-
-  var theadRow = document.getElementById("table-head-row");
-  if (theadRow) {
-    theadRow.innerHTML =
-      '<th class="col-habit">Привычка</th>' +
-      '<th class="col-target">Цель</th>' +
-      week.map(function(d) {
-        return '<th class="' + (d.isToday ? 'is-today' : '') + '">' + d.name + '<small>' + d.dateNumber + '</small></th>';
-      }).join("") +
-      '<th class="col-num">Факт</th>' +
-      '<th class="col-num">Осталось</th>' +
-      '<th class="col-progress">Прогресс</th>' +
-      '<th class="col-del"></th>';
-  }
-
-  var tbody = document.getElementById("habits-body");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-
-  var totalFact = 0;
-  var totalTarget = 0;
-  var dayStats = [0, 0, 0, 0, 0, 0, 0];
-
-  list.forEach(function(habit) {
-    var habitFact = 0;
-    var daysCellsHtml = "";
-
-    week.forEach(function(d, idx) {
-      var isChecked = !!historyData[d.iso + "_" + habit.id];
-      if (isChecked) {
-        habitFact++;
-        dayStats[idx]++;
-      }
-      daysCellsHtml +=
-        '<td>' +
-          '<div class="custom-chk ' + (isChecked ? 'active' : '') + '" onclick="toggleHabitDay(' + habit.id + ', \'' + d.iso + '\')">' +
-            (isChecked ? '✓' : '') +
-          '</div>' +
-        '</td>';
-    });
-
-    totalFact += habitFact;
-    totalTarget += (habit.target || 0);
-
-    var left = Math.max(0, (habit.target || 0) - habitFact);
-    var percent = (habit.target > 0) ? Math.min(100, Math.round((habitFact / habit.target) * 100)) : 0;
-
-    var tr = document.createElement("tr");
-    tr.innerHTML =
-      '<td class="col-habit">' + (habit.icon || "✨") + ' ' + habit.name + '</td>' +
-      '<td class="col-target">' + habit.target + '</td>' +
-      daysCellsHtml +
-      '<td class="col-num">' + habitFact + '</td>' +
-      '<td class="col-num">' + left + '</td>' +
-      '<td>' +
-        '<div class="row-progress-box">' +
-          '<div class="row-bar-bg"><div class="row-bar-fill" style="width:' + percent + '%"></div></div>' +
-          '<span class="row-bar-percent">' + percent + '%</span>' +
-        '</div>' +
-      '</td>' +
-      '<td class="col-del">' +
-        '<button class="btn-del-habit" title="Удалить" onclick="deleteHabit(' + habit.id + ')">✕</button>' +
-      '</td>';
-    tbody.appendChild(tr);
-  });
-
-  var scoreEl = document.getElementById("total-done-ratio");
-  var percentEl = document.getElementById("total-percent-label");
-  if (scoreEl) scoreEl.textContent = totalFact + " / " + totalTarget;
-  var totalPercent = (totalTarget > 0) ? Math.min(100, Math.round((totalFact / totalTarget) * 100)) : 0;
-  if (percentEl) percentEl.textContent = totalPercent + "%";
-
-  // СТОЛБИКИ ГРАФИКА: пропорциональная высота и честный светофор
-  var chartEl = document.getElementById("days-chart");
-  if (chartEl) {
-    chartEl.innerHTML = "";
-    var totalHabitsCount = list.length; // Общее количество привычек (например, 3)
-
-    week.forEach(function(d, idx) {
-      var count = dayStats[idx];
-      var heightPercent = 0;
-      var lvlClass = "";
-
-      if (count > 0 && totalHabitsCount > 0) {
-        // Честная высота: 1 из 3 -> 33%, 2 из 3 -> 66%, 3 из 3 -> 100%
-        heightPercent = Math.min(100, Math.round((count / totalHabitsCount) * 100));
-
-        if (heightPercent >= 100) {
-          lvlClass = "lvl-high"; // Все закрыты -> зеленый
-        } else if (heightPercent >= 50) {
-          lvlClass = "lvl-mid";  // 50% и более -> желтый
-        } else {
-          lvlClass = "lvl-low";  // Меньше половины -> красный
-        }
-      }
-
-      var col = document.createElement("div");
-      col.className = "chart-col";
-      col.innerHTML =
-        '<span class="chart-count">' + (count > 0 ? count : '') + '</span>' +
-        '<div class="chart-bar-wrap">' +
-          '<div class="chart-bar-fill ' + lvlClass + '" style="height: ' + heightPercent + '%"></div>' +
-        '</div>' +
-        '<span class="chart-label">' + d.name + '</span>';
-      chartEl.appendChild(col);
-    });
-  }
-}
-
-function renderMonthView() {
-  var list = (currentMode === "personal") ? personalHabits : coupleHabits;
-  var now = new Date();
-  var targetMonth = new Date(now.getFullYear(), now.getMonth() + currentMonthOffset, 1);
-  var monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
-
-  var monthTitle = document.getElementById("month-title-label");
-  if (monthTitle) {
-    monthTitle.textContent = monthNames[targetMonth.getMonth()] + " " + targetMonth.getFullYear();
-  }
-
-  var itemsList = document.getElementById("month-items-list");
-  if (!itemsList) return;
-  itemsList.innerHTML = "";
-
-  var prefix = targetMonth.getFullYear() + "-" + String(targetMonth.getMonth() + 1).padStart(2, "0");
-  var pieData = [];
-  var colors = ["#10b981", "#3b82f6", "#f59e0b", "#ec4899", "#8b5cf6", "#06b6d4"];
-
-  list.forEach(function(h, index) {
-    var count = 0;
-    Object.keys(historyData).forEach(function(k) {
-      if (k.startsWith(prefix) && k.endsWith("_" + h.id) && historyData[k]) {
-        count++;
-      }
-    });
-
-    if (count > 0) {
-      pieData.push({
-        label: h.name,
-        value: count,
-        color: colors[index % colors.length]
-      });
-    }
-
-    var maxExpect = (h.target || 3) * 4;
-    var fillPercent = Math.min(100, Math.round((count / maxExpect) * 100));
-
-    var item = document.createElement("div");
-    item.className = "month-stat-row";
-    item.innerHTML =
-      '<div class="month-stat-top">' +
-        '<span>' + (h.icon || "✨") + ' ' + h.name + '</span>' +
-        '<strong>' + count + ' выполнено</strong>' +
-      '</div>' +
-      '<div class="month-stat-bar-bg">' +
-        '<div class="month-stat-bar-fill" style="width: ' + fillPercent + '%; background: #10b981;"></div>' +
-      '</div>';
-    itemsList.appendChild(item);
-  });
-
-  drawMonthPieChart(pieData);
-}
-
-// Отрисовка круговой диаграммы месяца
-function drawMonthPieChart(segments) {
-  var canvas = document.getElementById("month-pie-canvas");
-  if (!canvas) return;
-  var ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  var total = segments.reduce(function(sum, s) { return sum + s.value; }, 0);
-  var centerX = canvas.width / 2;
-  var centerY = canvas.height / 2;
-  var radius = Math.min(centerX, centerY) - 15;
-
-  if (total === 0) {
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-    ctx.strokeStyle = "#273142";
-    ctx.lineWidth = 14;
-    ctx.stroke();
-
-    ctx.fillStyle = "#8da0b8";
-    ctx.font = "600 13px Montserrat, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("Нет данных", centerX, centerY);
-    return;
-  }
-
-  var currentAngle = -0.5 * Math.PI;
-  segments.forEach(function(segment) {
-    var sliceAngle = (segment.value / total) * 2 * Math.PI;
-
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, radius, currentAngle, currentAngle + sliceAngle);
-    ctx.strokeStyle = segment.color;
-    ctx.lineWidth = 18;
-    ctx.stroke();
-
-    currentAngle += sliceAngle;
-  });
-
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "700 18px Montserrat, sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(total, centerX, centerY - 8);
-
-  ctx.fillStyle = "#8da0b8";
-  ctx.font = "500 11px Montserrat, sans-serif";
-  ctx.fillText("всего", centerX, centerY + 12);
-}
-
-// ==========================================
-// 4. ДЕЙСТВИЯ
-// ==========================================
-
-window.switchMode = function(mode) {
-  currentMode = mode;
-  var pBtn = document.getElementById("mode-personal-btn");
-  var cBtn = document.getElementById("mode-couple-btn");
-  if (pBtn) pBtn.classList.toggle("active", mode === "personal");
-  if (cBtn) cBtn.classList.toggle("active", mode === "couple");
-  render();
-};
-
-window.switchView = function(view) {
-  currentView = view;
-  var wBtn = document.getElementById("tab-week-btn");
-  var mBtn = document.getElementById("tab-month-btn");
-  var wView = document.getElementById("view-week");
-  var mView = document.getElementById("view-month");
-
-  if (wBtn) wBtn.classList.toggle("active", view === "week");
-  if (mBtn) mBtn.classList.toggle("active", view === "month");
-  if (wView) wView.classList.toggle("active", view === "week");
-  if (mView) mView.classList.toggle("active", view === "month");
-  render();
-};
-
-window.changeWeek = function(direction) {
-  currentWeekOffset += direction;
-  render();
-};
-
-window.goToCurrentWeek = function() {
-  currentWeekOffset = 0;
-  render();
-};
-
-window.changeMonth = function(direction) {
-  currentMonthOffset += direction;
-  render();
-};
-
-window.openAddModal = function() {
-  var modal = document.getElementById("add-modal");
-  if (modal) modal.classList.add("active");
-  var input = document.getElementById("habit-name-input");
-  if (input) input.value = "";
-};
-
-window.closeAddModal = function() {
-  var modal = document.getElementById("add-modal");
-  if (modal) modal.classList.remove("active");
-};
-
-window.handleModalOverlayClick = function(e) {
-  if (e.target.id === "add-modal") {
-    window.closeAddModal();
-  }
-};
-
-window.pickIcon = function(element) {
-  document.querySelectorAll(".icon-opt").forEach(function(el) {
-    el.classList.remove("selected");
-  });
-  element.classList.add("selected");
-  selectedIcon = element.innerText.trim();
-};
-
-window.saveNewHabit = async function() {
-  var input = document.getElementById("habit-name-input");
-  var name = input ? input.value.trim() : "";
-  if (!name) {
-    alert("Введите название привычки!");
-    return;
-  }
-
-  var targetSlider = document.getElementById("habit-target-input");
-  var targetVal = targetSlider ? parseInt(targetSlider.value) : 3;
-
-  var newHabit = {
-    user_id: CURRENT_USER_ID,
-    name: name,
-    icon: selectedIcon,
-    target: targetVal,
-    color: "#6366f1",
-    is_couple: (currentMode === "couple" ? 1 : 0)
-  };
-
-  window.closeAddModal();
-
-  var createdId = await apiAddHabit(newHabit);
-  newHabit.id = createdId || Date.now();
-
-  if (currentMode === "personal") {
-    personalHabits.push(newHabit);
-  } else {
-    coupleHabits.push(newHabit);
-  }
-
-  render();
-};
-
-window.toggleHabitDay = async function(habitId, isoDate) {
-  var key = isoDate + "_" + habitId;
-  var willBeActive = !historyData[key];
-
-  if (willBeActive) {
-    historyData[key] = true;
-    if (window.confetti) {
-      window.confetti({ particleCount: 35, spread: 60, origin: { y: 0.8 } });
-    }
-  } else {
-    delete historyData[key];
-  }
-  render();
-
-  await apiToggleDay(habitId, isoDate);
-};
-
-window.deleteHabit = async function(habitId) {
-  if (!confirm("Удалить эту привычку?")) return;
-
-  if (currentMode === "personal") {
-    personalHabits = personalHabits.filter(function(h) { return h.id !== habitId; });
-  } else {
-    coupleHabits = coupleHabits.filter(function(h) { return h.id !== habitId; });
-  }
-  render();
-  await apiDeleteHabit(habitId);
-};
-
-document.addEventListener("DOMContentLoaded", function() {
-  loadServerState();
-});
+// Инициализация при старте
+renderDaysHeader();
+loadState();
