@@ -87,6 +87,11 @@ async def cmd_start(message: types.Message, command: CommandObject):
 # --- API ЭНДПОИНТЫ ДЛЯ WEBAPP ---
 routes = web.RouteTableDef()
 
+@routes.get("/")
+@routes.head("/")
+async def root_ping(request):
+    return web.Response(text="OK", status=200)
+
 @routes.get("/api/state")
 async def get_state(request):
     user_id_param = request.query.get("user_id")
