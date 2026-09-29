@@ -10,7 +10,8 @@ import database
 
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = "8011889033:AAF1gX4G2bT-3K8Gv-eYjVl5z8zP-L_XXXX"  # Твой действующий токен
+# Указан твой актуальный токен
+BOT_TOKEN = "8811889833:AAFbvBerdSfU9KnreoW-N__u4kBwGBY6Ru0"
 BOT_USERNAME = "self_control_to_succesful_bot"
 WEBAPP_URL = "https://dimadotnl.github.io/habit-tracker-bot/"
 
@@ -40,24 +41,26 @@ async def cmd_start(message: types.Message, command: CommandObject):
     user_id = message.from_user.id
     name = message.from_user.first_name or "Пользователь"
     
+    # 1. Сначала обязательно сохраняем вошедшего в базу пользователей
     await database.add_user(user_id, name)
     
-    # Обработка реферальной ссылки вида /start pair_12345
+    # 2. Обработка ссылки вида /start pair_12345
     args = command.args
     if args and args.startswith("pair_"):
         try:
             partner_id = int(args.replace("pair_", ""))
             if partner_id != user_id:
+                # Связываем пользователей
                 await database.link_pair(user_id, partner_id)
                 inviter_name = await database.get_partner_name(user_id) or "партнёром"
                 
-                # Сообщение тому, кто запустил бота по ссылке
+                # Уведомление тому, кто перешёл
                 await message.answer(
-                    f"🎉 Вы успешно объединились в пару с {inviter_name}!\n"
-                    f"Теперь ваши общие привычки синхронизированы 💕"
+                    f"🎉 Вы успешно создали пару с {inviter_name}!\n"
+                    f"Теперь ваши общие цели синхронизированы 💕"
                 )
                 
-                # Мгновенное личное уведомление тому, чья была ссылка
+                # Личное уведомление создателю ссылки
                 try:
                     await bot.send_message(
                         partner_id,
@@ -95,19 +98,14 @@ async def get_state(request):
     except ValueError:
         return web.json_response({"error": "invalid user_id"}, status=400)
 
-    # Личные привычки
     habits = await database.get_habits(user_id, is_couple=False)
-    
-    # Партнёр
     partner_id = await database.get_partner_id(user_id)
     partner_name = await database.get_partner_name(user_id) if partner_id else None
     
-    # Совместные привычки
     couple_habits = []
     if partner_id:
         couple_habits = await database.get_couple_habits(user_id, partner_id)
     else:
-        # Если партнёр ещё не подключён, но пользователь уже создал совместные привычки сам
         couple_habits = await database.get_habits(user_id, is_couple=True)
         
     all_habit_ids = [h['id'] for h in (habits + couple_habits)]
