@@ -9,7 +9,7 @@ if (tg) {
   } catch (e) {}
 }
 
-var CURRENT_USER_ID = 12345;
+var CURRENT_USER_ID = 556702536;
 if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
   CURRENT_USER_ID = tg.initDataUnsafe.user.id;
 }
@@ -22,7 +22,7 @@ var currentMonthOffset = 0;
 
 var personalHabits = [];
 var coupleHabits = [];
-var historyData = {}; // { "YYYY-MM-DD_habitId": true }
+var historyData = {};
 var partnerName = null;
 var partnerId = null;
 var selectedIcon = "🏋️";
@@ -49,19 +49,17 @@ async function loadServerState() {
       updatePartnerUI();
     }
   } catch (err) {
-    console.error("Ошибка загрузки:", err);
+    console.error("Ошибка загрузки состояния:", err);
   }
   render();
 }
 
 function updatePartnerUI() {
-  // Меняем текст кнопки вкладки "Совместные"
   var coupleTitle = document.getElementById("couple-tab-title");
   if (coupleTitle) {
     coupleTitle.textContent = partnerName ? ("💕 " + partnerName) : "Совместные";
   }
 
-  // Обновляем баннер над таблицей
   var banner = document.getElementById("partner-status-box");
   if (!banner) return;
 
@@ -86,9 +84,9 @@ window.invitePartner = function() {
   var inviteLink = "https://t.me/" + botUsername + "?start=pair_" + CURRENT_USER_ID;
   if (navigator.clipboard) {
     navigator.clipboard.writeText(inviteLink);
-    alert("Ссылка скопирована! Отправьте её партнёру в чат:\n" + inviteLink);
+    alert("Ссылка скопирована! Отправьте её второй половинке в чат:\n" + inviteLink);
   } else {
-    prompt("Отправьте эту ссылку партнёру:", inviteLink);
+    prompt("Отправьте эту ссылку второй половинке:", inviteLink);
   }
 };
 
@@ -116,13 +114,11 @@ async function apiToggleDay(habitId, isoDate) {
       headers: API_HEADERS,
       body: JSON.stringify({ habit_id: habitId, iso_date: isoDate })
     });
-    if (res.ok) {
-      return true;
-    }
+    return res.ok;
   } catch (err) {
     console.error("Ошибка apiToggleDay:", err);
   }
-  return null;
+  return false;
 }
 
 async function apiDeleteHabit(habitId) {
@@ -261,7 +257,6 @@ function renderWeekView() {
   var totalPercent = (totalTarget > 0) ? Math.min(100, Math.round((totalFact / totalTarget) * 100)) : 0;
   if (percentEl) percentEl.textContent = totalPercent + "%";
 
-  // СТОЛБИКИ ГРАФИКА
   var chartEl = document.getElementById("days-chart");
   if (chartEl) {
     chartEl.innerHTML = "";
@@ -480,27 +475,24 @@ window.saveNewHabit = async function() {
   var targetSlider = document.getElementById("habit-target-input");
   var targetVal = targetSlider ? parseInt(targetSlider.value) : 3;
 
-  var newHabit = {
+  var isCoupleBool = (currentMode === "couple");
+
+  var habitData = {
     user_id: CURRENT_USER_ID,
     name: name,
     icon: selectedIcon,
     target: targetVal,
-    color: "#6366f1",
-    is_couple: (currentMode === "couple" ? 1 : 0)
+    color: isCoupleBool ? "#ec4899" : "#6366f1",
+    is_couple: isCoupleBool
   };
 
   window.closeAddModal();
 
-  var createdId = await apiAddHabit(newHabit);
-  newHabit.id = createdId || Date.now();
-
-  if (currentMode === "personal") {
-    personalHabits.push(newHabit);
-  } else {
-    coupleHabits.push(newHabit);
-  }
-
-  render();
+  // Сохраняем в PostgreSQL
+  var createdId = await apiAddHabit(habitData);
+  
+  // Перезагружаем свежие данные прямо из базы, чтобы ничего не терялось
+  await loadServerState();
 };
 
 window.toggleHabitDay = async function(habitId, isoDate) {
