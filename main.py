@@ -10,15 +10,14 @@ import database
 
 logging.basicConfig(level=logging.INFO)
 
-# Укажи здесь свой актуальный токен бота и юзернейм
-BOT_TOKEN = "8811889833:AAFbvBerdSfU9KnreoW-N__u4kBwGBY6Ru0"  # Твой новый токен
+BOT_TOKEN = "8011889033:AAF1gX4G2bT-3K8Gv-eYjVl5z8zP-L_XXXX"  # Твой действующий токен
 BOT_USERNAME = "self_control_to_succesful_bot"
 WEBAPP_URL = "https://dimadotnl.github.io/habit-tracker-bot/"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- КОРС МИДДЛВЕЙР ДЛЯ BROWSER/TELEGRAM WEBAPP ---
+# --- КОРС МИДДЛВЕЙР ---
 @web.middleware
 async def cors_middleware(request, handler):
     if request.method == "OPTIONS":
@@ -43,20 +42,31 @@ async def cmd_start(message: types.Message, command: CommandObject):
     
     await database.add_user(user_id, name)
     
-    # Обработка реферального приглашения пары: /start pair_USERID
+    # Обработка реферальной ссылки вида /start pair_12345
     args = command.args
     if args and args.startswith("pair_"):
         try:
             partner_id = int(args.replace("pair_", ""))
             if partner_id != user_id:
                 await database.link_pair(user_id, partner_id)
-                await message.answer(f"🎉 Вы успешно создали пару с пользователем!")
+                inviter_name = await database.get_partner_name(user_id) or "партнёром"
+                
+                # Сообщение тому, кто запустил бота по ссылке
+                await message.answer(
+                    f"🎉 Вы успешно объединились в пару с {inviter_name}!\n"
+                    f"Теперь ваши общие привычки синхронизированы 💕"
+                )
+                
+                # Мгновенное личное уведомление тому, чья была ссылка
                 try:
-                    await bot.send_message(partner_id, f"🎉 {name} принял(а) ваше приглашение! Теперь вы отслеживаете привычки вместе.")
-                except Exception:
-                    pass
+                    await bot.send_message(
+                        partner_id,
+                        f"🎉 К вам подключился(-ась) {name}! Теперь вы ведёте цели вместе 💕"
+                    )
+                except Exception as e:
+                    logging.warning(f"Не удалось отправить уведомление партнёру: {e}")
         except Exception as e:
-            logging.error(f"Ошибка при связывании пары: {e}")
+            logging.error(f"Ошибка связывания пары: {e}")
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎯 Открыть Трекер Привычек", web_app=WebAppInfo(url=WEBAPP_URL))]
@@ -85,13 +95,20 @@ async def get_state(request):
     except ValueError:
         return web.json_response({"error": "invalid user_id"}, status=400)
 
+    # Личные привычки
     habits = await database.get_habits(user_id, is_couple=False)
+    
+    # Партнёр
     partner_id = await database.get_partner_id(user_id)
     partner_name = await database.get_partner_name(user_id) if partner_id else None
     
+    # Совместные привычки
     couple_habits = []
     if partner_id:
         couple_habits = await database.get_couple_habits(user_id, partner_id)
+    else:
+        # Если партнёр ещё не подключён, но пользователь уже создал совместные привычки сам
+        couple_habits = await database.get_habits(user_id, is_couple=True)
         
     all_habit_ids = [h['id'] for h in (habits + couple_habits)]
     history = await database.get_history(all_habit_ids)
@@ -109,10 +126,10 @@ async def get_state(request):
 async def add_habit_endpoint(request):
     data = await request.json()
     user_id = int(data.get("user_id"))
-    name = data.get("name")
-    icon = data.get("icon", "⭐")
-    target = int(data.get("target", 7))
-    color = data.get("color", "#ff4b4b")
+    name = str(data.get("name"))
+    icon = str(data.get("icon", "⭐"))
+    target = int(data.get("target", 3))
+    color = str(data.get("color", "#6366f1"))
     is_couple = bool(data.get("is_couple", False))
     
     habit_id = await database.add_habit(user_id, name, icon, target, color, is_couple)
