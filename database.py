@@ -46,8 +46,10 @@ async def add_user(user_id: int, name: str):
 
 async def link_pair(user1_id: int, user2_id: int):
     async with _pool.acquire() as conn:
+        # Очищаем старые привязки для обоих пользователей
         await conn.execute("DELETE FROM pairs WHERE user1_id = $1 OR user2_id = $1", user1_id)
         await conn.execute("DELETE FROM pairs WHERE user1_id = $2 OR user2_id = $2", user2_id)
+        # Создаем двустороннюю связь (A <-> B)
         await conn.execute("INSERT INTO pairs (user1_id, user2_id) VALUES ($1, $2), ($2, $1)", user1_id, user2_id)
 
 async def get_partner_id(user_id: int):
