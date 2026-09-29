@@ -86,7 +86,7 @@ window.invitePartner = function() {
   var inviteLink = "https://t.me/" + botUsername + "?start=pair_" + CURRENT_USER_ID;
   if (navigator.clipboard) {
     navigator.clipboard.writeText(inviteLink);
-    alert("Ссылка скопирована! Отправьте её девушке в чат:\n" + inviteLink);
+    alert("Ссылка скопирована! Отправьте её партнёру в чат:\n" + inviteLink);
   } else {
     prompt("Отправьте эту ссылку партнёру:", inviteLink);
   }
