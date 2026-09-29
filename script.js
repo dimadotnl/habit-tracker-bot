@@ -1,5 +1,5 @@
 // URL туннеля ngrok
-var API_BASE_URL = "https://habit-tracker-bot-kpem.onrender.com";
+var API_BASE_URL = "https://habit-tracker-bot-kgew.onrender.com";
 
 // Инициализация Telegram WebApp
 var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
