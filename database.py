@@ -47,13 +47,23 @@ async def add_user(user_id: int, name: str):
 async def link_pair(user1_id: int, user2_id: int):
     async with _pool.acquire() as conn:
         await conn.execute("DELETE FROM pairs WHERE user1_id = $1 OR user2_id = $1", user1_id)
-        await conn.execute("DELETE FROM pairs WHERE user1_id = $1 OR user2_id = $1", user2_id)
+        await conn.execute("DELETE FROM pairs WHERE user1_id = $2 OR user2_id = $2", user2_id)
         await conn.execute("INSERT INTO pairs (user1_id, user2_id) VALUES ($1, $2), ($2, $1)", user1_id, user2_id)
 
 async def get_partner_id(user_id: int):
     async with _pool.acquire() as conn:
         row = await conn.fetchrow("SELECT user2_id FROM pairs WHERE user1_id = $1", user_id)
         return row['user2_id'] if row else None
+
+async def get_partner_name(user_id: int):
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT u.name 
+            FROM pairs p
+            JOIN users u ON u.id = p.user2_id
+            WHERE p.user1_id = $1
+        """, user_id)
+        return row['name'] if row else None
 
 async def get_habits(user_id: int, is_couple: bool = False):
     couple_flag = 1 if is_couple else 0
@@ -62,6 +72,7 @@ async def get_habits(user_id: int, is_couple: bool = False):
             SELECT id, name, icon, target, color
             FROM habits
             WHERE user_id = $1 AND is_couple = $2
+            ORDER BY id ASC
         """, user_id, couple_flag)
         return [dict(r) for r in rows]
 
@@ -71,6 +82,7 @@ async def get_couple_habits(user1_id: int, user2_id: int):
             SELECT id, name, icon, target, color
             FROM habits
             WHERE (user_id = $1 OR user_id = $2) AND is_couple = 1
+            ORDER BY id ASC
         """, user1_id, user2_id)
         return [dict(r) for r in rows]
 
