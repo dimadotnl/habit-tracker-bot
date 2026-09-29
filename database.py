@@ -46,10 +46,18 @@ async def add_user(user_id: int, name: str):
 
 async def link_pair(user1_id: int, user2_id: int):
     async with _pool.acquire() as conn:
-        # Явное указание ::bigint исключает ошибку could not determine data type
-        await conn.execute("DELETE FROM pairs WHERE user1_id = $1::bigint OR user2_id = $1::bigint", user1_id)
-        await conn.execute("DELETE FROM pairs WHERE user1_id = $2::bigint OR user2_id = $2::bigint", user2_id)
-        await conn.execute("INSERT INTO pairs (user1_id, user2_id) VALUES ($1::bigint, $2::bigint), ($2::bigint, $1::bigint)", user1_id, user2_id)
+        u1 = int(user1_id)
+        u2 = int(user2_id)
+        
+        # 1. Удаляем любые старые пары (каждый параметр уникален: $1 и $2)
+        await conn.execute("DELETE FROM pairs WHERE user1_id = $1::bigint", u1)
+        await conn.execute("DELETE FROM pairs WHERE user2_id = $1::bigint", u1)
+        await conn.execute("DELETE FROM pairs WHERE user1_id = $1::bigint", u2)
+        await conn.execute("DELETE FROM pairs WHERE user2_id = $1::bigint", u2)
+        
+        # 2. Создаем взаимную связь в обе стороны
+        await conn.execute("INSERT INTO pairs (user1_id, user2_id) VALUES ($1::bigint, $2::bigint)", u1, u2)
+        await conn.execute("INSERT INTO pairs (user1_id, user2_id) VALUES ($1::bigint, $2::bigint)", u2, u1)
 
 async def get_partner_id(user_id: int):
     async with _pool.acquire() as conn:
