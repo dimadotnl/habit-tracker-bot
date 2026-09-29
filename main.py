@@ -10,7 +10,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
 import database
 
-BOT_TOKEN = "8811889833:AAE4clz8UhbjEtdP_XxqfJcRu2Ze4UgTHek"
+BOT_TOKEN = "8811889833:AAFbvBerdSfU9KnreoW-N__u4kBwGBY6Ru0"
 WEB_APP_URL = "https://dimadotnl.github.io/habit-tracker-bot/"
 
 logging.basicConfig(level=logging.INFO)
